@@ -365,60 +365,6 @@ class Provider {
         return videos;
     }
 
-
-    private normalizeTitle(value: string): string {
-        return value
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/[^a-z0-9]+/g, " ")
-            .trim()
-            .replace(/\s+/g, " ");
-    }
-
-    private getSlugFromUrl(url: string): string {
-        const clean = url.replace(/\/$/, "").split("?")[0].split("#")[0];
-        const parts = clean.split("/");
-        return parts[parts.length - 1] || "";
-    }
-
-    private scoreSearchResult(query: string, title: string, url: string): number {
-        const nq = this.normalizeTitle(query);
-        const nt = this.normalizeTitle(title);
-        const slug = this.getSlugFromUrl(url);
-        const ns = this.normalizeTitle(slug.replace(/-/g, " "));
-
-        if (nq === "") return 0;
-
-        let score = 0;
-
-        if (ns === nq) score += 1000;
-        if (nt === nq) score += 900;
-        if (nt.includes(nq)) score += 500;
-        if (ns.includes(nq)) score += 450;
-        if (nt !== "" && nq.includes(nt)) score += 250;
-        if (ns !== "" && nq.includes(ns)) score += 250;
-
-        const queryWords = nq.split(" ").filter(Boolean);
-        const titleWords = new Set(nt.split(" ").filter(Boolean));
-        const slugWords = new Set(ns.split(" ").filter(Boolean));
-
-        let titleMatches = 0;
-        let slugMatches = 0;
-
-        for (const word of queryWords) {
-            if (titleWords.has(word)) titleMatches++;
-            if (slugWords.has(word)) slugMatches++;
-        }
-
-        if (queryWords.length > 0) {
-            score += Math.round((titleMatches / queryWords.length) * 200);
-            score += Math.round((slugMatches / queryWords.length) * 300);
-        }
-
-        return score;
-    }
-
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         let tempquery = opts.query;
 
@@ -444,35 +390,14 @@ class Provider {
                 continue;
             }
 
-            let bestAnimeUrl = "";
-            let bestTitle = "";
-            let bestScore = -1;
+            const firstResult = searchResults.first();
+            const animeUrl = firstResult.attr("href");
 
-            for (let i = 0; i < searchResults.length(); i++) {
-                const result = searchResults.eq(i);
-                const href = result.attr("href") || "";
-                if (!href) continue;
-
-                const resultTitle = result.text() || "";
-                const score = this.scoreSearchResult(tempquery, resultTitle, href);
-
-                console.log(`[SEARCH] Candidate ${i}:`, { title: resultTitle.trim(), url: href, slug: this.getSlugFromUrl(href), score });
-
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestAnimeUrl = href;
-                    bestTitle = resultTitle.trim();
-                }
-            }
-
-            if (!bestAnimeUrl) {
-                console.log("[SEARCH] No usable candidate");
+            if (!animeUrl) {
                 return [];
             }
 
-            console.log("[SEARCH] Selected:", { query: tempquery, title: bestTitle, url: bestAnimeUrl, score: bestScore });
-
-            const animeUrl = bestAnimeUrl;
+            console.log("Found anime URL:", animeUrl);
 
             const seasons = await this.fetchAnimeSeasons(animeUrl);
 
