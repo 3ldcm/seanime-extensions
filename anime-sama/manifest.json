@@ -1,9 +1,9 @@
 {
-  "id": "anime-sama-online-streaming-mod",
+  "id": "anime-sama-v2-online-streaming",
   "name": "Anime-Sama",
   "description": "Anime-Sama online streaming provider for Seanime",
   "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/manifest.json",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Bastien",
   "type": "onlinestream-provider",
   "language": "javascript",
