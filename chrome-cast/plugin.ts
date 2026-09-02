@@ -29,31 +29,19 @@ function init() {
         }
 
         function hideSeanimeControls() {
-            // Trouver et masquer TOUS les éléments de contrôle Seanime
-            // On cible les éléments qui ne sont PAS la vidéo elle-même
             const allEls = document.querySelectorAll("[data-vc-element], [data-video-core-element]")
             let hidden = 0
 
             for (const el of allEls) {
                 const vcEl = el.getAttribute("data-vc-element") || el.getAttribute("data-video-core-element") || ""
-
-                // Ne pas masquer la vidéo elle-même
                 if (vcEl === "video") continue
 
-                // Masquer tout le reste (controls, controls-bar, etc.)
                 ;(el as HTMLElement).style.setProperty("display", "none", "important")
                 hidden++
             }
 
             if (hidden > 0) {
                 console.log(`[Chrome Cast Diagnostic] ${hidden} éléments Seanime masqués`)
-            }
-        }
-
-        function showSeanimeControls() {
-            const allEls = document.querySelectorAll("[data-vc-element], [data-video-core-element]")
-            for (const el of allEls) {
-                ;(el as HTMLElement).style.removeProperty("display")
             }
         }
 
@@ -73,19 +61,16 @@ function init() {
             if (!video) return
 
             video.addEventListener("play", () => {
-                // En lecture : masquer contrôles Seanime, garder Chrome natifs
                 hideSeanimeControls()
                 video.controls = true
                 console.log("[Chrome Cast Diagnostic] Play → contrôles Seanime masqués")
             })
 
             video.addEventListener("pause", () => {
-                // En pause : garder Chrome natifs (Cast accessible)
                 video.controls = true
                 console.log("[Chrome Cast Diagnostic] Pause → controls restent actifs")
             })
 
-            // Si déjà en pause au chargement
             if (video.paused) {
                 hideSeanimeControls()
                 video.controls = true
@@ -93,10 +78,8 @@ function init() {
         }
 
         ctx.dom.onReady(async () => {
-            // Diagnostic : lister TOUS les éléments avec data-vc-element
             console.log("[Chrome Cast Diagnostic] === DÉBUT DIAGNOSTIC DOM ===")
 
-            // Observer les data-vc-element
             ctx.dom.observe("[data-vc-element]", (elements) => {
                 let i = 0
                 for (const el of elements) {
@@ -105,7 +88,6 @@ function init() {
                 }
             })
 
-            // Observer les data-video-core-element
             ctx.dom.observe("[data-video-core-element]", (elements) => {
                 let i = 0
                 for (const el of elements) {
@@ -114,32 +96,26 @@ function init() {
                 }
             })
 
-            // petit délai pour laisser le DOM se monter
-            setTimeout(() => {
-                enableChromeCast()
-                setupPlayPauseToggle()
+            enableChromeCast()
+            setupPlayPauseToggle()
 
-                // Diagnostic initial
-                const allEls = document.querySelectorAll("[data-vc-element], [data-video-core-element]")
-                console.log(`[Chrome Cast Diagnostic] ${allEls.length} éléments trouvés au total`)
-                for (const el of allEls) {
-                    const vcEl = el.getAttribute("data-vc-element") || el.getAttribute("data-video-core-element") || ""
-                    const classes = el.className || ""
-                    const tag = el.tagName
-                    console.log(`[Chrome Cast Diagnostic] → <${tag}> data-vc="${vcEl}" class="${classes}"`)
-                }
-                console.log("[Chrome Cast Diagnostic] === FIN DIAGNOSTIC DOM ===")
-            }, 1000)
+            // Diagnostic
+            const allEls = document.querySelectorAll("[data-vc-element], [data-video-core-element]")
+            console.log(`[Chrome Cast Diagnostic] ${allEls.length} éléments trouvés`)
+            for (const el of allEls) {
+                const vcEl = el.getAttribute("data-vc-element") || el.getAttribute("data-video-core-element") || ""
+                const classes = el.className || ""
+                const tag = el.tagName
+                console.log(`[Chrome Cast Diagnostic] → <${tag}> data-vc="${vcEl}" class="${classes}"`)
+            }
+            console.log("[Chrome Cast Diagnostic] === FIN DIAGNOSTIC DOM ===")
 
             ctx.toast.success("Chrome Cast : diagnostic lancé")
         })
 
-        // Réinjecter au changement de vidéo
         ctx.dom.observe("[data-vc-element='video'], [data-video-core-element='video']", () => {
-            setTimeout(() => {
-                enableChromeCast()
-                setupPlayPauseToggle()
-            }, 500)
+            enableChromeCast()
+            setupPlayPauseToggle()
         })
     })
 }

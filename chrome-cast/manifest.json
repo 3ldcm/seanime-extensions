@@ -1,7 +1,7 @@
 {
   "id": "chrome-cast-test",
   "name": "Chrome Cast Test",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/chrome-cast/manifest.json",
   "language": "typescript",
   "type": "plugin",
