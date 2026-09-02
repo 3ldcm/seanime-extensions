@@ -1,12 +1,13 @@
 {
   "id": "anime-sama-v2-online-streaming",
-  "name": "Anime-Sama",
-  "description": "Anime-Sama online streaming provider for Seanime",
+  "name": "FR | Anime Sama V2",
+  "description": "Anime-Sama online streaming provider for Seanime (modified version with improved search)",
   "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/manifest.json",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "Bastien",
   "type": "onlinestream-provider",
-  "language": "javascript",
+  "language": "typescript",
   "lang": "fr",
-  "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/provider.js"
+  "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/payload.ts",
+  "icon": ""
 }
