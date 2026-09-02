@@ -1,12 +1,12 @@
 {
   "id": "anime-sama-v2-online-streaming",
   "name": "FR | Anime Sama V2",
-  "description": "Anime-Sama streaming provider with improved search scoring",
+  "description": "Anime Sama est une extension Seanime en français qui permet de regarder des anime dans le catalogue du site anime-sama.com.",
   "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/manifest.json",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "author": "Bastien",
   "type": "onlinestream-provider",
   "language": "typescript",
   "lang": "fr",
-  "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/payload.ts?v=1.0.3"
+  "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/payload.ts?v=1.0.4"
 }
