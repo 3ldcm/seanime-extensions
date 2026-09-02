@@ -1,7 +1,6 @@
 function init() {
     $ui.register((ctx) => {
         const loggedElements = new Set<string>()
-        let controlsActive = false
 
         function describeElement(el: any, index: number) {
             try {
@@ -45,22 +44,11 @@ function init() {
 
         function enableChromeCast(video: any) {
             try {
-                // Autorise Chrome Remote Playback / Cast.
+                // Active les contrôles natifs Chrome (bouton Cast inclus)
                 video.setProperty("disableRemotePlayback", false)
-
-                // IMPORTANT :
-                // on garde temporairement les contrôles natifs Chrome
-                // car c'est là que le bouton Cast est actuellement visible.
                 video.setProperty("controls", true)
-
                 video.setProperty("playsInline", true)
-
-                video.setDataAttribute(
-                    "chrome-cast-test",
-                    "enabled"
-                )
-
-                controlsActive = true
+                video.setDataAttribute("chrome-cast-test", "enabled")
 
                 console.log(
                     "[Chrome Cast Diagnostic] Vidéo détectée, contrôles Chrome activés"
@@ -74,40 +62,43 @@ function init() {
         }
 
         /*
-         * FIX DOUBLE BAR :
+         * MASQUER LES CONTRÔLES SEANIME
          *
-         * Quand la vidéo joue, Chrome cache ses contrôles natifs
-         * derrière ceux de Seanime → 1 barre.
-         *
-         * Quand la vidéo est en pause, Chrome affiche ses contrôles
-         * natifs EN PLUS de ceux de Seanime → 2 barres.
-         *
-         * Solution : désactiver les contrôles natifs Chrome
-         * quand la vidéo joue (ils ne servent à rien car
-         * Seanime gère la lecture), et les réactiver
-         * à la pause pour garder le bouton Cast accessible.
+         * On veut UNIQUEMENT la barre Chrome native (avec Cast).
+         * On cache les éléments de contrôle Seanime via CSS.
          */
-        function setupPlayPauseToggle(video: any) {
-            const htmlVideo = video.getElement ? video.getElement() : null
-            if (!htmlVideo) return
-
-            htmlVideo.addEventListener("play", () => {
-                if (controlsActive) {
-                    htmlVideo.controls = false
-                    console.log(
-                        "[Chrome Cast Diagnostic] Play → controls natifs désactivés (1 barre)"
-                    )
+        function hideSeanimeControls() {
+            const style = document.createElement("style")
+            style.setAttribute("data-chrome-cast", "hide-seanime-controls")
+            style.textContent = `
+                /* Masquer la barre de contrôles Seanime */
+                [data-vc-element="controls"],
+                [data-vc-element="controls-bar"],
+                [data-vc-element="player-controls"],
+                [data-video-core-element="controls"],
+                [data-video-core-element="controls-bar"],
+                .video-controls,
+                .player-controls,
+                .controls-bar,
+                [class*="controls"][class*="video"],
+                [class*="player"][class*="controls"] {
+                    display: none !important;
+                    opacity: 0 !important;
+                    pointer-events: none !important;
                 }
-            })
+            `
 
-            htmlVideo.addEventListener("pause", () => {
-                if (controlsActive) {
-                    htmlVideo.controls = true
-                    console.log(
-                        "[Chrome Cast Diagnostic] Pause → controls natifs réactivés (Cast accessible)"
-                    )
-                }
-            })
+            // Éviter les doublons
+            const existing = document.querySelector('style[data-chrome-cast="hide-seanime-controls"]')
+            if (existing) {
+                existing.remove()
+            }
+
+            document.head.appendChild(style)
+
+            console.log(
+                "[Chrome Cast Diagnostic] Contrôles Seanime masqués"
+            )
         }
 
         ctx.dom.onReady(async () => {
@@ -117,10 +108,10 @@ function init() {
 
             if (video) {
                 enableChromeCast(video)
-                setupPlayPauseToggle(video)
+                hideSeanimeControls()
 
                 ctx.toast.success(
-                    "Chrome Cast : diagnostic activé"
+                    "Chrome Cast : contrôles Chrome natifs activés"
                 )
             } else {
                 console.log(
@@ -136,7 +127,7 @@ function init() {
             (videos) => {
                 for (const video of videos) {
                     enableChromeCast(video)
-                    setupPlayPauseToggle(video)
+                    hideSeanimeControls()
                 }
             }
         )
