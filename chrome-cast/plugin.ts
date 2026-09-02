@@ -2,173 +2,144 @@ function init() {
     $ui.register((ctx) => {
         const loggedElements = new Set<string>()
 
-        function describeElement(el: any, index: number) {
+        function describeElement(el: any, index: number, label: string) {
             try {
-                const attrs = el.attributes || {}
-                const vcElement =
-                    attrs["data-vc-element"] ||
-                    attrs["data-video-core-element"] ||
-                    ""
-                const className = attrs["class"] || ""
-                const id = attrs["id"] || ""
-                const key = `${vcElement}|${id}|${className}|${index}`
+                const node = el.getNode ? el.getNode() : null
+                if (!node) return
 
+                const attrs: Record<string, string> = {}
+                if (node.attributes) {
+                    for (const [k, v] of Object.entries(node.attributes)) {
+                        attrs[k] = String(v)
+                    }
+                }
+
+                const key = `${label}|${attrs["data-vc-element"] || attrs["data-video-core-element"] || ""}|${attrs["class"] || ""}|${attrs["id"] || ""}|${index}`
                 if (loggedElements.has(key)) return
                 loggedElements.add(key)
 
-                console.log("[Chrome Cast Diagnostic] DOM element", {
-                    vcElement, id, className, attributes: attrs
-                })
+                console.log("[Chrome Cast Diagnostic]", label, JSON.stringify(attrs))
             } catch (e) {
-                console.error("[Chrome Cast Diagnostic] Erreur describe:", e)
+                console.error("[Chrome Cast Diagnostic] describe error:", e)
             }
         }
 
-        /*
-         * CRÉER LE BOUTON CAST
-         */
-        function createCastButton(): HTMLElement {
-            const btn = document.createElement("button")
-            btn.setAttribute("data-chrome-cast-button", "true")
-            btn.title = "Cast to device"
-            btn.style.cssText = `
-                background: none;
-                border: none;
-                color: white;
-                cursor: pointer;
-                padding: 4px 8px;
-                margin: 0 2px;
-                font-size: 18px;
-                line-height: 1;
-                opacity: 0.85;
-                transition: opacity 0.2s;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            `
-            btn.innerHTML = `
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
-                    <circle cx="2" cy="20" r="1"/>
-                </svg>
-            `
+        function getHtmlVideo(): HTMLVideoElement | null {
+            return document.querySelector("video")
+        }
 
-            btn.addEventListener("mouseenter", () => { btn.style.opacity = "1" })
-            btn.addEventListener("mouseleave", () => { btn.style.opacity = "0.85" })
+        function hideSeanimeControls() {
+            // Trouver et masquer TOUS les éléments de contrôle Seanime
+            // On cible les éléments qui ne sont PAS la vidéo elle-même
+            const allEls = document.querySelectorAll("[data-vc-element], [data-video-core-element]")
+            let hidden = 0
 
-            btn.addEventListener("click", async (e) => {
-                e.preventDefault()
-                e.stopPropagation()
+            for (const el of allEls) {
+                const vcEl = el.getAttribute("data-vc-element") || el.getAttribute("data-video-core-element") || ""
 
-                const video = document.querySelector(
-                    "video[data-video-core-element], video[data-vc-element='video'], video"
-                ) as HTMLVideoElement
+                // Ne pas masquer la vidéo elle-même
+                if (vcEl === "video") continue
 
-                if (!video) {
-                    console.error("[Chrome Cast] Aucune vidéo trouvée")
-                    return
-                }
+                // Masquer tout le reste (controls, controls-bar, etc.)
+                ;(el as HTMLElement).style.setProperty("display", "none", "important")
+                hidden++
+            }
 
-                try {
-                    // Activer Remote Playback si nécessaire
-                    video.disableRemotePlayback = false
+            if (hidden > 0) {
+                console.log(`[Chrome Cast Diagnostic] ${hidden} éléments Seanime masqués`)
+            }
+        }
 
-                    if (video.remote) {
-                        console.log("[Chrome Cast] Ouverture du sélecteur Cast...")
-                        await video.remote.prompt()
-                    } else {
-                        console.warn("[Chrome Cast] Remote Playback API non disponible")
-                    }
-                } catch (err) {
-                    console.error("[Chrome Cast] Erreur Cast:", err)
-                }
+        function showSeanimeControls() {
+            const allEls = document.querySelectorAll("[data-vc-element], [data-video-core-element]")
+            for (const el of allEls) {
+                ;(el as HTMLElement).style.removeProperty("display")
+            }
+        }
+
+        function enableChromeCast() {
+            const video = getHtmlVideo()
+            if (!video) return
+
+            video.disableRemotePlayback = false
+            video.controls = true
+            video.setAttribute("data-chrome-cast-test", "enabled")
+
+            console.log("[Chrome Cast Diagnostic] Video controls activés")
+        }
+
+        function setupPlayPauseToggle() {
+            const video = getHtmlVideo()
+            if (!video) return
+
+            video.addEventListener("play", () => {
+                // En lecture : masquer contrôles Seanime, garder Chrome natifs
+                hideSeanimeControls()
+                video.controls = true
+                console.log("[Chrome Cast Diagnostic] Play → contrôles Seanime masqués")
             })
 
-            return btn
-        }
+            video.addEventListener("pause", () => {
+                // En pause : garder Chrome natifs (Cast accessible)
+                video.controls = true
+                console.log("[Chrome Cast Diagnostic] Pause → controls restent actifs")
+            })
 
-        /*
-         * INJECTER LE BOUTON DANS LA BARRE SEANIME
-         */
-        function injectCastButton() {
-            // Si déjà injecté, ne rien faire
-            if (document.querySelector("[data-chrome-cast-button]")) return
-
-            // Chercher la barre de contrôles Seanime
-            const controlsBar =
-                document.querySelector('[data-vc-element="controls"]') ||
-                document.querySelector('[data-vc-element="controls-bar"]') ||
-                document.querySelector('[data-vc-element="player-controls"]') ||
-                document.querySelector('[data-video-core-element="controls"]') ||
-                document.querySelector('[data-video-core-element="controls-bar"]')
-
-            if (!controlsBar) {
-                console.log("[Chrome Cast Diagnostic] Barre de contrôles Seanime non trouvée")
-                return
+            // Si déjà en pause au chargement
+            if (video.paused) {
+                hideSeanimeControls()
+                video.controls = true
             }
-
-            const castBtn = createCastButton()
-            controlsBar.appendChild(castBtn)
-
-            console.log("[Chrome Cast Diagnostic] Bouton Cast injecté dans la barre Seanime")
         }
 
         ctx.dom.onReady(async () => {
-            const video = await ctx.dom.queryOne(
-                '[data-vc-element="video"]'
-            )
+            // Diagnostic : lister TOUS les éléments avec data-vc-element
+            console.log("[Chrome Cast Diagnostic] === DÉBUT DIAGNOSTIC DOM ===")
 
-            if (video) {
-                // NE PAS activer controls=true sur la vidéo
-                // On garde les contrôles Seanime, on ajoute juste le bouton Cast
-                try {
-                    video.setProperty("playsInline", true)
-                    video.setDataAttribute("chrome-cast-test", "enabled")
-                } catch (e) {}
-
-                // Petit délai pour laisser Seanime monter ses contrôles
-                setTimeout(injectCastButton, 500)
-
-                ctx.toast.success("Chrome Cast : bouton Cast ajouté")
-            } else {
-                console.log("[Chrome Cast Diagnostic] Aucune vidéo trouvée au démarrage")
-            }
-        })
-
-        // Observer les changements de vidéo (changement d'épisode/serveur)
-        ctx.dom.observe(
-            '[data-vc-element="video"]',
-            (videos) => {
-                for (const _video of videos) {
-                    // Réinjecter si besoin (nouvelle vidéo = nouveaux contrôles)
-                    setTimeout(injectCastButton, 500)
+            // Observer les data-vc-element
+            ctx.dom.observe("[data-vc-element]", (elements) => {
+                let i = 0
+                for (const el of elements) {
+                    describeElement(el, i, "data-vc-element")
+                    i++
                 }
-            }
-        )
+            })
 
-        // Observer aussi les changements dans la barre de contrôles
-        ctx.dom.observe(
-            '[data-vc-element="controls"], [data-vc-element="controls-bar"], [data-video-core-element="controls"]',
-            () => {
-                setTimeout(injectCastButton, 300)
-            }
-        )
+            // Observer les data-video-core-element
+            ctx.dom.observe("[data-video-core-element]", (elements) => {
+                let i = 0
+                for (const el of elements) {
+                    describeElement(el, i, "data-video-core-element")
+                    i++
+                }
+            })
 
-        // Diagnostic DOM
-        ctx.dom.observe('[data-vc-element]', (elements) => {
-            let index = 0
-            for (const el of elements) {
-                describeElement(el, index)
-                index++
-            }
+            // petit délai pour laisser le DOM se monter
+            setTimeout(() => {
+                enableChromeCast()
+                setupPlayPauseToggle()
+
+                // Diagnostic initial
+                const allEls = document.querySelectorAll("[data-vc-element], [data-video-core-element]")
+                console.log(`[Chrome Cast Diagnostic] ${allEls.length} éléments trouvés au total`)
+                for (const el of allEls) {
+                    const vcEl = el.getAttribute("data-vc-element") || el.getAttribute("data-video-core-element") || ""
+                    const classes = el.className || ""
+                    const tag = el.tagName
+                    console.log(`[Chrome Cast Diagnostic] → <${tag}> data-vc="${vcEl}" class="${classes}"`)
+                }
+                console.log("[Chrome Cast Diagnostic] === FIN DIAGNOSTIC DOM ===")
+            }, 1000)
+
+            ctx.toast.success("Chrome Cast : diagnostic lancé")
         })
 
-        ctx.dom.observe('[data-video-core-element]', (elements) => {
-            let index = 0
-            for (const el of elements) {
-                describeElement(el, index)
-                index++
-            }
+        // Réinjecter au changement de vidéo
+        ctx.dom.observe("[data-vc-element='video'], [data-video-core-element='video']", () => {
+            setTimeout(() => {
+                enableChromeCast()
+                setupPlayPauseToggle()
+            }, 500)
         })
     })
 }
