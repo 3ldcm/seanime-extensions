@@ -1,6 +1,7 @@
 function init() {
     $ui.register((ctx) => {
         const loggedElements = new Set<string>()
+        let controlsActive = false
 
         function describeElement(el: any, index: number) {
             try {
@@ -59,6 +60,8 @@ function init() {
                     "enabled"
                 )
 
+                controlsActive = true
+
                 console.log(
                     "[Chrome Cast Diagnostic] Vidéo détectée, contrôles Chrome activés"
                 )
@@ -70,6 +73,43 @@ function init() {
             }
         }
 
+        /*
+         * FIX DOUBLE BAR :
+         *
+         * Quand la vidéo joue, Chrome cache ses contrôles natifs
+         * derrière ceux de Seanime → 1 barre.
+         *
+         * Quand la vidéo est en pause, Chrome affiche ses contrôles
+         * natifs EN PLUS de ceux de Seanime → 2 barres.
+         *
+         * Solution : désactiver les contrôles natifs Chrome
+         * quand la vidéo joue (ils ne servent à rien car
+         * Seanime gère la lecture), et les réactiver
+         * à la pause pour garder le bouton Cast accessible.
+         */
+        function setupPlayPauseToggle(video: any) {
+            const htmlVideo = video.getElement ? video.getElement() : null
+            if (!htmlVideo) return
+
+            htmlVideo.addEventListener("play", () => {
+                if (controlsActive) {
+                    htmlVideo.controls = false
+                    console.log(
+                        "[Chrome Cast Diagnostic] Play → controls natifs désactivés (1 barre)"
+                    )
+                }
+            })
+
+            htmlVideo.addEventListener("pause", () => {
+                if (controlsActive) {
+                    htmlVideo.controls = true
+                    console.log(
+                        "[Chrome Cast Diagnostic] Pause → controls natifs réactivés (Cast accessible)"
+                    )
+                }
+            })
+        }
+
         ctx.dom.onReady(async () => {
             const video = await ctx.dom.queryOne(
                 '[data-vc-element="video"]'
@@ -77,6 +117,7 @@ function init() {
 
             if (video) {
                 enableChromeCast(video)
+                setupPlayPauseToggle(video)
 
                 ctx.toast.success(
                     "Chrome Cast : diagnostic activé"
@@ -95,6 +136,7 @@ function init() {
             (videos) => {
                 for (const video of videos) {
                     enableChromeCast(video)
+                    setupPlayPauseToggle(video)
                 }
             }
         )
