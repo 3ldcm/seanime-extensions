@@ -1,20 +1,7 @@
 /// <reference path="../_external/.onlinestream-provider.d.ts" />
 /// <reference path="../_external/core.d.ts" />
 
-/**
- * Anime-Sama V2 — Provider amélioré
- *
- * Changements vs v1 :
- * - DevMode désactivé par défaut
- * - Retry + timeout sur les requêtes réseau
- * - Fetch unique pour les films (pas de double appel)
- * - Meilleure gestion des erreurs
- * - Logs réduits en production
- * - Gestion VF/VF1/VF2 plus robuste
- */
-
-const DevMode = false;
-
+const DevMode = true;
 const originalConsoleLog = console.log;
 
 console.log = function (...args: any[]) {
@@ -22,8 +9,6 @@ console.log = function (...args: any[]) {
         originalConsoleLog.apply(console, args);
     }
 };
-
-// ── Types ────────────────────────────────────────────────────
 
 interface AnimeSeason {
     title: string;
@@ -33,14 +18,6 @@ interface AnimeSeason {
     description: string;
     genre: string;
 }
-
-// ── Config ───────────────────────────────────────────────────
-
-const FETCH_TIMEOUT_MS = 15_000;
-const MAX_RETRIES = 2;
-const RETRY_DELAY_MS = 800;
-
-// ── Provider ─────────────────────────────────────────────────
 
 class Provider {
     readonly BASE_URL = "https://anime-sama.to";
@@ -69,34 +46,40 @@ class Provider {
         "ansembed"
     ];
 
-    // ── Regex ────────────────────────────────────────────────
-
     private static readonly TRAILING_SLASH_RE = /\/$/;
     private static readonly COMMENT_RE = /\/\*[\s\S]*?\*\/|\/\/.*$/gm;
+
     private static readonly SEASON_PANEL_RE =
         /panneauAnime\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)/g;
+
     private static readonly MOVIE_NAME_RE =
         /^\s*newSPF\("([^"]+)"\)/gm;
+
     private static readonly FILEVER_RE =
         /episodes\.js\?filever=(\d+)/;
+
     private static readonly EPISODE_ARRAY_RE =
         /var\s+eps\w*\s*=\s*\[([\s\S]*?)\];/g;
+
     private static readonly EPISODE_URL_RE =
         /'(https?:\/\/[^']+)'/g;
+
     private static readonly VIDMOLY_RE =
         /vidmoly\.to/g;
+
     private static readonly SCRIPT_TAG_RE =
         /<script[^>]*>([\s\S]*?)<\/script>/gi;
+
     private static readonly PACKER_RE =
         /eval\(function\([^)]*\)\{[\s\S]*?\}\(\s*'([\s\S]*?)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([\s\S]*?)'\.split\('\|'\)/;
+
     private static readonly VIDEO_URL_RE =
         /(?:https?:\/\/|\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
+
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
 
     _Server = "";
-
-    // ── Settings ─────────────────────────────────────────────
 
     getSettings(): Settings {
         return {
@@ -105,59 +88,29 @@ class Provider {
         };
     }
 
-    // ── Réseau ───────────────────────────────────────────────
-
-    /**
-     * Fetch avec timeout et retry.
-     * Pas de proxy — accès direct à anime-sama.to.
+    /*
+     * IMPORTANT
+     * On ne repasse plus par /api/v1/proxy.
+     * Ça évite le 401 UNAUTHENTICATED sur le LXC.
      */
-    private async robustFetch(
-        url: string,
-        retries = MAX_RETRIES
-    ): Promise<Response | null> {
-        for (let attempt = 0; attempt <= retries; attempt++) {
-            try {
-                const controller = new AbortController();
-                const timer = setTimeout(
-                    () => controller.abort(),
-                    FETCH_TIMEOUT_MS
-                );
-
-                const response = await fetch(url, {
-                    signal: controller.signal
-                });
-
-                clearTimeout(timer);
-                return response;
-            } catch (error: any) {
-                const isLast = attempt === retries;
-
-                if (isLast) {
-                    console.error(
-                        `[FETCH] Échec après ${retries + 1} tentatives:`,
-                        url,
-                        error?.message || error
-                    );
-                    return null;
-                }
-
-                // Backoff exponentiel
-                await new Promise(r =>
-                    setTimeout(r, RETRY_DELAY_MS * (attempt + 1))
-                );
-            }
-        }
-
-        return null;
+    private proxyFetch(
+        targetUrl: string
+    ): Promise<Response> {
+        return fetch(targetUrl);
     }
 
-    // ── Utilitaires ──────────────────────────────────────────
-
-    private stripComments(text: string): string {
-        return text.replace(Provider.COMMENT_RE, "");
+    private stripComments(
+        text: string
+    ): string {
+        return text.replace(
+            Provider.COMMENT_RE,
+            ""
+        );
     }
 
-    private normalizeTitle(value: string): string {
+    private normalizeTitle(
+        value: string
+    ): string {
         return value
             .toLowerCase()
             .normalize("NFD")
@@ -167,509 +120,1107 @@ class Provider {
             .replace(/\s+/g, " ");
     }
 
-    private getSlugFromUrl(url: string): string {
-        const clean = url
-            .replace(Provider.TRAILING_SLASH_RE, "")
-            .split("?")[0]
-            .split("#")[0];
-        const parts = clean.split("/");
-        return parts[parts.length - 1] || "";
-    }
+    private getSlugFromUrl(
+        url: string
+    ): string {
+        const clean =
+            url
+                .replace(
+                    Provider.TRAILING_SLASH_RE,
+                    ""
+                )
+                .split("?")[0]
+                .split("#")[0];
 
-    private sleep(ms: number): Promise<void> {
-        return new Promise(r => setTimeout(r, ms));
-    }
+        const parts =
+            clean.split("/");
 
-    // ── Scoring ──────────────────────────────────────────────
+        return parts[
+            parts.length - 1
+        ] || "";
+    }
 
     private scoreSearchResult(
         query: string,
         title: string,
         url: string
     ): number {
-        const nq = this.normalizeTitle(query);
-        const nt = this.normalizeTitle(title);
-        const slug = this.getSlugFromUrl(url);
-        const ns = this.normalizeTitle(slug.replace(/-/g, " "));
 
-        if (nq === "") return 0;
+        const normalizedQuery =
+            this.normalizeTitle(query);
+
+        const normalizedTitle =
+            this.normalizeTitle(title);
+
+        const slug =
+            this.getSlugFromUrl(url);
+
+        const normalizedSlug =
+            this.normalizeTitle(
+                slug.replace(/-/g, " ")
+            );
+
+        if (
+            normalizedQuery === ""
+        ) {
+            return 0;
+        }
 
         let score = 0;
 
-        // Correspondance exacte
-        if (ns === nq) score += 1000;
-        if (nt === nq) score += 900;
+        if (
+            normalizedSlug ===
+            normalizedQuery
+        ) {
+            score += 1000;
+        }
 
-        // Inclusion
-        if (nt.includes(nq)) score += 500;
-        if (ns.includes(nq)) score += 450;
+        if (
+            normalizedTitle ===
+            normalizedQuery
+        ) {
+            score += 900;
+        }
 
-        // Inverse
-        if (nt !== "" && nq.includes(nt)) score += 250;
-        if (ns !== "" && nq.includes(ns)) score += 250;
+        if (
+            normalizedTitle.includes(
+                normalizedQuery
+            )
+        ) {
+            score += 500;
+        }
 
-        // Mot par mot
-        const queryWords = nq.split(" ").filter(Boolean);
-        const titleWords = new Set(nt.split(" ").filter(Boolean));
-        const slugWords = new Set(ns.split(" ").filter(Boolean));
+        if (
+            normalizedSlug.includes(
+                normalizedQuery
+            )
+        ) {
+            score += 450;
+        }
+
+        if (
+            normalizedTitle !== "" &&
+            normalizedQuery.includes(
+                normalizedTitle
+            )
+        ) {
+            score += 250;
+        }
+
+        if (
+            normalizedSlug !== "" &&
+            normalizedQuery.includes(
+                normalizedSlug
+            )
+        ) {
+            score += 250;
+        }
+
+        const queryWords =
+            normalizedQuery
+                .split(" ")
+                .filter(Boolean);
+
+        const titleWords =
+            new Set(
+                normalizedTitle
+                    .split(" ")
+                    .filter(Boolean)
+            );
+
+        const slugWords =
+            new Set(
+                normalizedSlug
+                    .split(" ")
+                    .filter(Boolean)
+            );
 
         let titleMatches = 0;
         let slugMatches = 0;
 
-        for (const word of queryWords) {
-            if (titleWords.has(word)) titleMatches++;
-            if (slugWords.has(word)) slugMatches++;
+        for (
+            const word of queryWords
+        ) {
+            if (
+                titleWords.has(word)
+            ) {
+                titleMatches++;
+            }
+
+            if (
+                slugWords.has(word)
+            ) {
+                slugMatches++;
+            }
         }
 
-        if (queryWords.length > 0) {
-            score += Math.round((titleMatches / queryWords.length) * 200);
-            score += Math.round((slugMatches / queryWords.length) * 300);
+        if (
+            queryWords.length > 0
+        ) {
+            score += Math.round(
+                (
+                    titleMatches /
+                    queryWords.length
+                ) * 200
+            );
+
+            score += Math.round(
+                (
+                    slugMatches /
+                    queryWords.length
+                ) * 300
+            );
         }
 
         return score;
     }
 
-    // ── Saisons ──────────────────────────────────────────────
-
     private async fetchAnimeSeasons(
         rawAnimeUrl: string
     ): Promise<AnimeSeason[]> {
+
         try {
-            const animeUrl = rawAnimeUrl.replace(
-                Provider.TRAILING_SLASH_RE,
-                ""
+            const animeUrl =
+                rawAnimeUrl.replace(
+                    Provider.TRAILING_SLASH_RE,
+                    ""
+                );
+
+            console.log(
+                "[SEASONS] Anime URL:",
+                animeUrl
             );
 
-            const response = await this.robustFetch(animeUrl);
+            const response =
+                await this.proxyFetch(
+                    animeUrl
+                );
 
-            if (!response || !response.ok) {
+            console.log(
+                "[SEASONS] HTTP status:",
+                response.status
+            );
+
+            console.log(
+                "[SEASONS] response.ok:",
+                response.ok
+            );
+
+            if (!response.ok) {
                 return [];
             }
 
-            const html = await response.text();
-            const $ = await LoadDoc(html);
+            const html =
+                await response.text();
 
-            const animeName = $("#titreOeuvre").text() || "";
-            const thumbnail = $("#coverOeuvre").attr("src") || "";
+            console.log(
+                "[SEASONS] HTML length:",
+                html.length
+            );
+
+            console.log(
+                "[SEASONS] Contains panneauAnime:",
+                html.includes(
+                    "panneauAnime"
+                )
+            );
+
+            const $ =
+                await LoadDoc(html);
+
+            const animeName =
+                $("#titreOeuvre")
+                    .text() || "";
+
+            const thumbnail =
+                $("#coverOeuvre")
+                    .attr("src") || "";
+
             const description =
-                $("h2:contains(synopsis)").next("p").text() || "";
-            const genre = $("h2:contains(genres)").next("a").text() || "";
+                $("h2:contains(synopsis)")
+                    .next("p")
+                    .text() || "";
 
-            const scripts = $("div.flex.flex-wrap").find("script").text();
-            const uncommented = this.stripComments(scripts);
+            const genre =
+                $("h2:contains(genres)")
+                    .next("a")
+                    .text() || "";
+
+            console.log(
+                "[SEASONS] Anime name:",
+                animeName
+            );
+
+            const scripts =
+                $("div.flex.flex-wrap")
+                    .find("script")
+                    .text();
+
+            console.log(
+                "[SEASONS] Script length:",
+                scripts.length
+            );
+
+            console.log(
+                "[SEASONS] Script contains panneauAnime:",
+                scripts.includes(
+                    "panneauAnime"
+                )
+            );
+
+            const uncommented =
+                this.stripComments(
+                    scripts
+                );
 
             const rawPanneaux: {
                 seasonName: string;
                 seasonStem: string;
             }[] = [];
 
-            let match: RegExpExecArray | null;
+            let match:
+                RegExpExecArray | null;
+
             Provider.SEASON_PANEL_RE.lastIndex = 0;
 
             while (
-                (match = Provider.SEASON_PANEL_RE.exec(uncommented)) !== null
+                (
+                    match =
+                        Provider.SEASON_PANEL_RE.exec(
+                            uncommented
+                        )
+                ) !== null
             ) {
+                console.log(
+                    "[SEASONS] panneauAnime match:",
+                    match[1],
+                    match[2]
+                );
+
                 rawPanneaux.push({
-                    seasonName: match[1],
-                    seasonStem: match[2],
+                    seasonName:
+                        match[1],
+                    seasonStem:
+                        match[2]
                 });
             }
 
-            // Dédoublonnage
-            const seenNames = new Set<string>();
-            const dedupedPanneaux = rawPanneaux.filter(({ seasonName }) => {
-                if (seenNames.has(seasonName)) return false;
-                seenNames.add(seasonName);
-                return true;
-            });
-
-            const seasonGroups = await Promise.all(
-                dedupedPanneaux.map(
-                    async ({
-                        seasonName,
-                        seasonStem,
-                    }): Promise<AnimeSeason[]> => {
-                        // ── Films ──
-                        if (seasonStem.includes("film")) {
-                            return this.handleFilmSeason(
-                                animeUrl,
-                                animeName,
-                                seasonStem,
-                                thumbnail,
-                                description,
-                                genre
-                            );
-                        }
-
-                        // ── Séries ──
-                        return [
-                            {
-                                title: `${animeName} ${seasonName}`,
-                                url: `${animeUrl}/${seasonStem}`,
-                                status: "UNKNOWN",
-                                thumbnail,
-                                description,
-                                genre,
-                            },
-                        ];
-                    }
-                )
+            console.log(
+                "[SEASONS] Raw seasons found:",
+                rawPanneaux.length
             );
 
-            return seasonGroups.flat();
+            const seenNames =
+                new Set<string>();
+
+            const dedupedPanneaux =
+                rawPanneaux.filter(
+                    ({ seasonName }) => {
+
+                        if (
+                            seenNames.has(
+                                seasonName
+                            )
+                        ) {
+                            return false;
+                        }
+
+                        seenNames.add(
+                            seasonName
+                        );
+
+                        return true;
+                    }
+                );
+
+            const seasonGroups =
+                await Promise.all(
+                    dedupedPanneaux.map(
+                        async ({
+                            seasonName,
+                            seasonStem
+                        }): Promise<AnimeSeason[]> => {
+
+                            if (
+                                seasonStem.includes(
+                                    "film"
+                                )
+                            ) {
+                                const moviesUrl =
+                                    `${animeUrl}/${seasonStem}`;
+
+                                const moviePlayers =
+                                    await this.fetchPlayers(
+                                        moviesUrl
+                                    );
+
+                                if (
+                                    moviePlayers.length === 0
+                                ) {
+                                    return [];
+                                }
+
+                                const movieResponse =
+                                    await this.proxyFetch(
+                                        moviesUrl
+                                    );
+
+                                if (
+                                    !movieResponse.ok
+                                ) {
+                                    return [];
+                                }
+
+                                const movieHtml =
+                                    await movieResponse.text();
+
+                                const movieNames:
+                                    string[] = [];
+
+                                let nameMatch:
+                                    RegExpExecArray | null;
+
+                                Provider.MOVIE_NAME_RE.lastIndex = 0;
+
+                                while (
+                                    (
+                                        nameMatch =
+                                            Provider.MOVIE_NAME_RE.exec(
+                                                movieHtml
+                                            )
+                                    ) !== null
+                                ) {
+                                    movieNames.push(
+                                        nameMatch[1]
+                                    );
+                                }
+
+                                const movieSeasons:
+                                    AnimeSeason[] = [];
+
+                                for (
+                                    let i = 0;
+                                    i < moviePlayers.length;
+                                    i++
+                                ) {
+                                    const title =
+                                        movieNames.length > i
+                                            ? `${animeName} ${movieNames[i]}`
+                                            : moviePlayers.length === 1
+                                                ? `${animeName} Film`
+                                                : `${animeName} Film ${i + 1}`;
+
+                                    movieSeasons.push({
+                                        title,
+                                        url:
+                                            `${moviesUrl}#${i}`,
+                                        status:
+                                            "COMPLETED",
+                                        thumbnail,
+                                        description,
+                                        genre
+                                    });
+                                }
+
+                                return movieSeasons;
+                            }
+
+                            const seasonUrl =
+                                `${animeUrl}/${seasonStem}`;
+
+                            console.log(
+                                "[SEASONS] Series season URL:",
+                                seasonUrl
+                            );
+
+                            return [
+                                {
+                                    title:
+                                        `${animeName} ${seasonName}`,
+                                    url:
+                                        seasonUrl,
+                                    status:
+                                        "UNKNOWN",
+                                    thumbnail,
+                                    description,
+                                    genre
+                                }
+                            ];
+                        }
+                    )
+                );
+
+            const finalSeasons =
+                seasonGroups.flat();
+
+            console.log(
+                "[SEASONS] Final seasons count:",
+                finalSeasons.length
+            );
+
+            return finalSeasons;
+
         } catch (error) {
-            console.error("[SEASONS] Erreur:", error);
+            console.error(
+                "[SEASONS] ERROR:",
+                error
+            );
+
             return [];
         }
     }
-
-    /**
-     * Gestion unifiée des films :
-     * un seul fetch pour les players + les noms.
-     */
-    private async handleFilmSeason(
-        animeUrl: string,
-        animeName: string,
-        seasonStem: string,
-        thumbnail: string,
-        description: string,
-        genre: string
-    ): Promise<AnimeSeason[]> {
-        const moviesUrl = `${animeUrl}/${seasonStem}`;
-
-        // Fetch episodes.js une seule fois
-        const result = await this.fetchEpisodesJs(moviesUrl);
-
-        if (!result) {
-            return [];
-        }
-
-        const episodeArrays = this.parseEpisodeArrays(result.js);
-
-        if (episodeArrays.length === 0) {
-            return [];
-        }
-
-        // Extraire les noms depuis la page HTML déjà récupérée
-        const movieNames: string[] = [];
-        let nameMatch: RegExpExecArray | null;
-        Provider.MOVIE_NAME_RE.lastIndex = 0;
-
-        while (
-            (nameMatch = Provider.MOVIE_NAME_RE.exec(result.pageHtml)) !== null
-        ) {
-            movieNames.push(nameMatch[1]);
-        }
-
-        // Grouper par index
-        const groups = this.groupEpisodesByIndex(episodeArrays);
-
-        const movieSeasons: AnimeSeason[] = [];
-
-        for (let i = 0; i < groups.length; i++) {
-            const title =
-                movieNames.length > i
-                    ? `${animeName} ${movieNames[i]}`
-                    : groups.length === 1
-                      ? `${animeName} Film`
-                      : `${animeName} Film ${i + 1}`;
-
-            movieSeasons.push({
-                title,
-                url: `${moviesUrl}#${i}`,
-                status: "COMPLETED",
-                thumbnail,
-                description,
-                genre,
-            });
-        }
-
-        return movieSeasons;
-    }
-
-    // ── Episodes.js ──────────────────────────────────────────
 
     private async fetchEpisodesJs(
         seasonUrl: string
-    ): Promise<{ js: string; pageHtml: string } | null> {
-        const basePath = seasonUrl.replace(Provider.TRAILING_SLASH_RE, "");
+    ): Promise<{
+        js: string;
+        pageHtml: string;
+    } | null> {
 
-        const pageResponse = await this.robustFetch(`${basePath}/`);
+        const basePath =
+            seasonUrl.replace(
+                Provider.TRAILING_SLASH_RE,
+                ""
+            );
 
-        if (!pageResponse || !pageResponse.ok) {
+        const pageResponse =
+            await this.proxyFetch(
+                `${basePath}/`
+            );
+
+        console.log(
+            "[EPISODES] Season page status:",
+            pageResponse.status
+        );
+
+        if (!pageResponse.ok) {
             return null;
         }
 
-        const pageHtml = await pageResponse.text();
+        const pageHtml =
+            await pageResponse.text();
 
-        const fileverMatch = pageHtml.match(Provider.FILEVER_RE);
+        const fileverMatch =
+            pageHtml.match(
+                Provider.FILEVER_RE
+            );
 
-        const episodesJsUrl = fileverMatch
-            ? `${basePath}/episodes.js?filever=${fileverMatch[1]}`
-            : `${basePath}/episodes.js`;
+        const episodesJsUrl =
+            fileverMatch
+                ? `${basePath}/episodes.js?filever=${fileverMatch[1]}`
+                : `${basePath}/episodes.js`;
 
-        const jsResponse = await this.robustFetch(episodesJsUrl);
+        console.log(
+            "[EPISODES] episodes.js:",
+            episodesJsUrl
+        );
 
-        if (!jsResponse || !jsResponse.ok) {
+        const jsResponse =
+            await this.proxyFetch(
+                episodesJsUrl
+            );
+
+        console.log(
+            "[EPISODES] episodes.js status:",
+            jsResponse.status
+        );
+
+        if (!jsResponse.ok) {
             return null;
         }
 
         return {
-            js: await jsResponse.text(),
-            pageHtml,
+            js:
+                await jsResponse.text(),
+            pageHtml
         };
     }
 
-    // ── Parsing épisodes ─────────────────────────────────────
+    private parseEpisodeArrays(
+        js: string
+    ): string[][] {
 
-    private parseEpisodeArrays(js: string): string[][] {
-        const episodeArrays: string[][] = [];
-        let match: RegExpExecArray | null;
+        const episodeArrays:
+            string[][] = [];
+
+        let match:
+            RegExpExecArray | null;
 
         Provider.EPISODE_ARRAY_RE.lastIndex = 0;
 
         while (
-            (match = Provider.EPISODE_ARRAY_RE.exec(js)) !== null
+            (
+                match =
+                    Provider.EPISODE_ARRAY_RE.exec(
+                        js
+                    )
+            ) !== null
         ) {
-            const urls = (match[1].match(Provider.EPISODE_URL_RE) || [])
-                .map(u =>
-                    u
-                        .slice(1, -1)
-                        .replace(Provider.VIDMOLY_RE, "vidmoly.net")
+            const urls =
+                (
+                    match[1].match(
+                        Provider.EPISODE_URL_RE
+                    ) || []
                 )
-                .filter(u => u.length > 0);
+                    .map(
+                        u =>
+                            u
+                                .slice(1, -1)
+                                .replace(
+                                    Provider.VIDMOLY_RE,
+                                    "vidmoly.net"
+                                )
+                    );
 
-            if (urls.length > 0) {
-                episodeArrays.push(urls);
+            if (
+                urls.length > 0
+            ) {
+                episodeArrays.push(
+                    urls
+                );
             }
         }
+
+        console.log(
+            "[EPISODES] Provider arrays:",
+            episodeArrays.length
+        );
+
+        console.log(
+            "[EPISODES] Array lengths:",
+            episodeArrays.map(
+                arr => arr.length
+            )
+        );
 
         return episodeArrays;
     }
 
-    private groupEpisodesByIndex(episodeArrays: string[][]): string[][] {
-        if (episodeArrays.length === 0) return [];
+    private groupEpisodesByIndex(
+        episodeArrays: string[][]
+    ): string[][] {
 
-        const maxEpisodes = Math.max(
-            ...episodeArrays.map(arr => arr.length)
-        );
+        if (
+            episodeArrays.length === 0
+        ) {
+            return [];
+        }
 
-        const groups: string[][] = [];
+        const maxEpisodes =
+            Math.max(
+                ...episodeArrays.map(
+                    arr => arr.length
+                )
+            );
 
-        for (let i = 0; i < maxEpisodes; i++) {
-            const episodeUrls = episodeArrays
-                .map(arr => arr[i])
-                .filter((url): url is string => !!url);
+        const groups:
+            string[][] = [];
 
-            if (episodeUrls.length > 0) {
-                groups.push(episodeUrls);
+        for (
+            let episodeIndex = 0;
+            episodeIndex < maxEpisodes;
+            episodeIndex++
+        ) {
+            const episodeUrls =
+                episodeArrays
+                    .map(
+                        voiceArray =>
+                            voiceArray[
+                                episodeIndex
+                            ]
+                    )
+                    .filter(
+                        (
+                            url
+                        ): url is string =>
+                            !!url
+                    );
+
+            if (
+                episodeUrls.length > 0
+            ) {
+                groups.push(
+                    episodeUrls
+                );
             }
         }
 
         return groups;
     }
 
-    // ── Players ──────────────────────────────────────────────
+    private async fetchPlayers(
+        url: string
+    ): Promise<string[][]> {
 
-    private async fetchPlayers(url: string): Promise<string[][]> {
         try {
-            const result = await this.fetchEpisodesJs(url);
+            const result =
+                await this.fetchEpisodesJs(
+                    url
+                );
 
-            if (!result) return [];
+            if (!result) {
+                return [];
+            }
 
-            const episodeArrays = this.parseEpisodeArrays(result.js);
+            const episodeArrays =
+                this.parseEpisodeArrays(
+                    result.js
+                );
 
-            if (episodeArrays.length === 0) return [];
+            if (
+                episodeArrays.length === 0
+            ) {
+                return [];
+            }
 
-            return this.groupEpisodesByIndex(episodeArrays);
+            return this.groupEpisodesByIndex(
+                episodeArrays
+            );
+
         } catch (error) {
-            console.error("[PLAYERS] Erreur:", error);
+            console.error(
+                "Error fetching players:",
+                error
+            );
+
             return [];
         }
-    }
-
-    // ── Serveurs vidéo ───────────────────────────────────────
-
-    private unpack(
-        p: string,
-        a: number,
-        c: number,
-        k: string[]
-    ): string {
-        while (c--) {
-            if (k[c]) {
-                p = p.replace(
-                    new RegExp("\\b" + c.toString(a) + "\\b", "g"),
-                    k[c]
-                );
-            }
-        }
-        return p;
     }
 
     private async HandleServerUrl(
         serverUrl: string
     ): Promise<VideoSource[]> {
-        const req = await this.robustFetch(serverUrl);
 
-        if (!req || !req.ok) {
-            console.error(
-                "[SERVER] Échec fetch:",
-                serverUrl,
-                req?.status
+        const req =
+            await this.proxyFetch(
+                serverUrl
             );
+
+        if (!req.ok) {
+            console.error(
+                "Failed to fetch server URL:",
+                serverUrl,
+                "Status:",
+                req.status
+            );
+
             return [];
         }
 
-        const html = await req.text();
+        const html =
+            await req.text();
 
-        // Désempaqueter le JS obfusqué
-        let unpacked: string | undefined;
-        let match: RegExpExecArray | null;
+        function unpack(
+            p: string,
+            a: number,
+            c: number,
+            k: string[]
+        ): string {
+
+            while (c--) {
+                if (k[c]) {
+                    p =
+                        p.replace(
+                            new RegExp(
+                                "\\b" +
+                                c.toString(a) +
+                                "\\b",
+                                "g"
+                            ),
+                            k[c]
+                        );
+                }
+            }
+
+            return p;
+        }
+
+        let unpacked:
+            string | undefined;
+
+        let match:
+            RegExpExecArray | null;
 
         Provider.SCRIPT_TAG_RE.lastIndex = 0;
 
         while (
-            (match = Provider.SCRIPT_TAG_RE.exec(html)) !== null
+            (
+                match =
+                    Provider.SCRIPT_TAG_RE.exec(
+                        html
+                    )
+            ) !== null
         ) {
-            const script = match[1];
+            const script =
+                match[1];
 
-            if (script.includes("eval(function(p,a,c,k,e,d)")) {
-                const unpackMatch = script.match(Provider.PACKER_RE);
+            if (
+                script.includes(
+                    "eval(function(p,a,c,k,e,d)"
+                )
+            ) {
+                const unpackMatch =
+                    script.match(
+                        Provider.PACKER_RE
+                    );
 
                 if (unpackMatch) {
-                    unpacked = this.unpack(
-                        unpackMatch[1],
-                        parseInt(unpackMatch[2], 10),
-                        parseInt(unpackMatch[3], 10),
-                        unpackMatch[4].split("|")
-                    );
+                    const packed =
+                        unpackMatch[1];
+
+                    const base =
+                        parseInt(
+                            unpackMatch[2],
+                            10
+                        );
+
+                    const count =
+                        parseInt(
+                            unpackMatch[3],
+                            10
+                        );
+
+                    const dict =
+                        unpackMatch[4]
+                            .split("|");
+
+                    unpacked =
+                        unpack(
+                            packed,
+                            base,
+                            count,
+                            dict
+                        );
+
                     break;
                 }
             }
         }
 
-        const searchSource = unpacked
-            ? `${html}\n${unpacked}`
-            : html;
+        const searchSource =
+            unpacked
+                ? `${html}\n${unpacked}`
+                : html;
 
         const videoUrls =
-            searchSource.match(Provider.VIDEO_URL_RE) || [];
+            searchSource.match(
+                Provider.VIDEO_URL_RE
+            ) || [];
 
-        const videos: VideoSource[] = [];
+        const videos:
+            VideoSource[] = [];
 
         let origin = "";
+
         try {
-            origin = new URL(serverUrl).origin;
-        } catch {
-            // ignore
+            const urlObj =
+                new URL(serverUrl);
+
+            origin =
+                urlObj.origin;
+
+        } catch (error) {
+            console.error(
+                "Failed to parse server URL for origin:",
+                serverUrl
+            );
         }
 
-        for (const url of videoUrls) {
-            let finalUrl = url;
+        for (
+            const url of videoUrls
+        ) {
+            let finalUrl =
+                url;
 
-            if (url.startsWith("/") && !url.startsWith("//")) {
-                if (origin === "") continue;
-                finalUrl = origin + url;
-            } else if (url.startsWith("//")) {
-                finalUrl = `https:${url}`;
+            if (
+                url.startsWith("/") &&
+                !url.startsWith("//")
+            ) {
+                if (
+                    origin === ""
+                ) {
+                    continue;
+                }
+
+                finalUrl =
+                    origin + url;
+
+            } else if (
+                url.startsWith("//")
+            ) {
+                finalUrl =
+                    `https:${url}`;
             }
 
-            const type = finalUrl.includes(".m3u8") ? "m3u8" : "mp4";
+            const type =
+                finalUrl.includes(
+                    ".m3u8"
+                )
+                    ? "m3u8"
+                    : "mp4";
 
             videos.push({
-                url: finalUrl,
-                type: type as VideoSourceType,
-                quality: `${this._Server} - unknown`,
-                subtitles: [],
+                url:
+                    finalUrl,
+                type:
+                    type as VideoSourceType,
+                quality:
+                    `${this._Server} - unknown`,
+                subtitles:
+                    []
             });
         }
 
         return videos;
     }
 
-    // ── Recherche ────────────────────────────────────────────
+    async search(
+        opts: SearchOptions
+    ): Promise<SearchResult[]> {
 
-    async search(opts: SearchOptions): Promise<SearchResult[]> {
-        let tempquery = opts.query;
+        let tempquery =
+            opts.query;
 
-        while (tempquery !== "") {
-            const searchUrl = new URL(this.CATALOGUE_URL);
-            searchUrl.searchParams.set("search", tempquery);
-            searchUrl.searchParams.set("page", "1");
+        while (
+            tempquery !== ""
+        ) {
+            console.log(
+                `[SEARCH] Query: "${tempquery}"`
+            );
 
-            const response = await fetch(searchUrl.toString());
-
-            if (!response.ok) {
-                tempquery = tempquery
-                    .split(Provider.QUERY_SPLIT_RE)
-                    .slice(0, -1)
-                    .join(" ");
-                continue;
-            }
-
-            const html = await response.text();
-            const $ = await LoadDoc(html);
-            const searchResults = $("#list_catalog > div a");
-
-            if (searchResults.length() <= 0) {
-                tempquery = tempquery
-                    .split(Provider.QUERY_SPLIT_RE)
-                    .slice(0, -1)
-                    .join(" ");
-                continue;
-            }
-
-            let bestAnimeUrl = "";
-            let bestTitle = "";
-            let bestScore = -1;
-
-            for (let i = 0; i < searchResults.length(); i++) {
-                const result = searchResults.eq(i);
-                const href = result.attr("href") || "";
-
-                if (!href) continue;
-
-                const resultTitle = result.text() || "";
-                const score = this.scoreSearchResult(
-                    tempquery,
-                    resultTitle,
-                    href
+            const searchUrl =
+                new URL(
+                    this.CATALOGUE_URL
                 );
 
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestAnimeUrl = href;
-                    bestTitle = resultTitle.trim();
+            searchUrl.searchParams.set(
+                "search",
+                tempquery
+            );
+
+            searchUrl.searchParams.set(
+                "page",
+                "1"
+            );
+
+            const response =
+                await fetch(
+                    searchUrl.toString()
+                );
+
+            console.log(
+                "[SEARCH] HTTP status:",
+                response.status
+            );
+
+            console.log(
+                "[SEARCH] response.ok:",
+                response.ok
+            );
+
+            if (
+                !response.ok
+            ) {
+                tempquery =
+                    tempquery
+                        .split(
+                            Provider.QUERY_SPLIT_RE
+                        )
+                        .slice(
+                            0,
+                            -1
+                        )
+                        .join(" ");
+
+                continue;
+            }
+
+            const html =
+                await response.text();
+
+            const $ =
+                await LoadDoc(html);
+
+            const searchResults =
+                $("#list_catalog > div a");
+
+            if (
+                searchResults.length() <=
+                0
+            ) {
+                console.log(
+                    "[SEARCH] No results"
+                );
+
+                tempquery =
+                    tempquery
+                        .split(
+                            Provider.QUERY_SPLIT_RE
+                        )
+                        .slice(
+                            0,
+                            -1
+                        )
+                        .join(" ");
+
+                continue;
+            }
+
+            console.log(
+                "[SEARCH] Results found:",
+                searchResults.length()
+            );
+
+            let bestAnimeUrl =
+                "";
+
+            let bestTitle =
+                "";
+
+            let bestScore =
+                -1;
+
+            for (
+                let i = 0;
+                i <
+                searchResults.length();
+                i++
+            ) {
+                const result =
+                    searchResults.eq(i);
+
+                const href =
+                    result.attr(
+                        "href"
+                    ) || "";
+
+                if (!href) {
+                    continue;
+                }
+
+                const resultTitle =
+                    result.text() || "";
+
+                const score =
+                    this.scoreSearchResult(
+                        tempquery,
+                        resultTitle,
+                        href
+                    );
+
+                console.log(
+                    `[SEARCH] Candidate ${i}:`,
+                    resultTitle.trim(),
+                    href,
+                    score
+                );
+
+                if (
+                    score >
+                    bestScore
+                ) {
+                    bestScore =
+                        score;
+
+                    bestAnimeUrl =
+                        href;
+
+                    bestTitle =
+                        resultTitle.trim();
                 }
             }
 
-            if (!bestAnimeUrl) {
+            if (
+                !bestAnimeUrl
+            ) {
                 return [];
             }
 
-            const seasons =
-                await this.fetchAnimeSeasons(bestAnimeUrl);
+            console.log(
+                "[SEARCH] Selected:",
+                bestTitle,
+                bestAnimeUrl,
+                bestScore
+            );
 
-            if (seasons.length === 0) {
+            const seasons =
+                await this.fetchAnimeSeasons(
+                    bestAnimeUrl
+                );
+
+            if (
+                seasons.length === 0
+            ) {
+                console.log(
+                    "[SEARCH] Selected candidate has no seasons:",
+                    bestAnimeUrl
+                );
+
                 return [];
             }
 
             return await Promise.all(
                 seasons.map(
-                    async (season): Promise<SearchResult> => {
-                        let finalUrl = season.url;
+                    async (
+                        season:
+                            AnimeSeason
+                    ): Promise<SearchResult> => {
 
-                        // VF / VF1 / VF2
-                        if (opts.dub && !finalUrl.includes("film")) {
-                            finalUrl = await this.resolveDubUrl(finalUrl);
+                        let finalUrl =
+                            season.url;
+
+                        if (
+                            opts.dub &&
+                            !finalUrl.includes(
+                                "film"
+                            )
+                        ) {
+                            const dubUrl =
+                                finalUrl.replace(
+                                    "/vostfr",
+                                    "/vf"
+                                );
+
+                            const dubResponse =
+                                await this.proxyFetch(
+                                    dubUrl
+                                );
+
+                            if (
+                                dubResponse.ok
+                            ) {
+                                finalUrl =
+                                    dubUrl;
+
+                            } else {
+                                const vf1Url =
+                                    dubUrl + "1";
+
+                                const vf1Response =
+                                    await this.proxyFetch(
+                                        vf1Url
+                                    );
+
+                                if (
+                                    vf1Response.ok
+                                ) {
+                                    finalUrl =
+                                        vf1Url;
+                                }
+                            }
                         }
 
                         return {
-                            id: finalUrl,
-                            title: season.title,
-                            url: finalUrl,
-                            subOrDub: opts.dub ? "dub" : "sub",
+                            id:
+                                finalUrl,
+                            title:
+                                season.title,
+                            url:
+                                finalUrl,
+                            subOrDub:
+                                opts.dub
+                                    ? "dub"
+                                    : "sub",
                         };
                     }
                 )
@@ -679,125 +1230,228 @@ class Provider {
         return [];
     }
 
-    /**
-     * Résout l'URL VF en essayant vf, vf1, vf2 dans l'ordre.
-     * Retourne la meilleure URL disponible.
-     */
-    private async resolveDubUrl(subUrl: string): Promise<string> {
-        const candidates = [
-            subUrl.replace("/vostfr", "/vf"),
-            subUrl.replace("/vostfr", "/vf1"),
-            subUrl.replace("/vostfr", "/vf2"),
-        ];
+    async findEpisodes(
+        id: string
+    ): Promise<EpisodeDetails[]> {
 
-        for (const candidate of candidates) {
-            const response = await this.robustFetch(candidate, 0);
-            if (response && response.ok) {
-                return candidate;
-            }
-        }
+        const animeUrl =
+            id.split("#")[0];
 
-        // Aucune VF trouvée → garder le VOSTFR
-        return subUrl;
-    }
+        const movieIndex =
+            id.split("#")[1];
 
-    // ── Épisodes ─────────────────────────────────────────────
-
-    async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        const animeUrl = id.split("#")[0];
-        const movieIndex = id.split("#")[1];
-
-        const result = await this.fetchEpisodesJs(animeUrl);
+        const result =
+            await this.fetchEpisodesJs(
+                animeUrl
+            );
 
         if (!result) {
+            console.error(
+                "Failed to fetch episodes.js"
+            );
+
             return [];
         }
 
-        const episodeArrays = this.parseEpisodeArrays(result.js);
+        const episodesText =
+            result.js;
 
-        if (episodeArrays.length === 0) {
+        const episodeDetails:
+            EpisodeDetails[] = [];
+
+        const episodeArrays =
+            this.parseEpisodeArrays(
+                episodesText
+            );
+
+        if (
+            episodeArrays.length === 0
+        ) {
             return [];
         }
 
-        // ── Films ──
-        if (movieIndex !== undefined) {
-            const movieIdx = parseInt(movieIndex, 10);
-            const movieUrls: string[] = [];
+        if (
+            movieIndex !== undefined
+        ) {
+            const movieIdx =
+                parseInt(
+                    movieIndex,
+                    10
+                );
 
-            for (const voiceArray of episodeArrays) {
-                if (voiceArray[movieIdx]) {
-                    movieUrls.push(voiceArray[movieIdx]);
+            const movieUrls:
+                string[] = [];
+
+            for (
+                const voiceArray
+                of episodeArrays
+            ) {
+                if (
+                    voiceArray[
+                        movieIdx
+                    ]
+                ) {
+                    movieUrls.push(
+                        voiceArray[
+                            movieIdx
+                        ]
+                    );
                 }
             }
 
-            if (movieUrls.length > 0) {
+            if (
+                movieUrls.length >
+                0
+            ) {
                 return [
                     {
-                        id: movieUrls.join(","),
-                        url: id,
-                        number: 1,
-                    },
+                        id:
+                            movieUrls.join(
+                                ","
+                            ),
+                        url:
+                            id,
+                        number:
+                            1
+                    }
                 ];
             }
 
             return [];
         }
 
-        // ── Séries ──
-        const groups = this.groupEpisodesByIndex(episodeArrays);
+        const groups =
+            this.groupEpisodesByIndex(
+                episodeArrays
+            );
 
-        return groups.map((episodeUrls, episodeIndex) => ({
-            id: episodeUrls.join(","),
-            url: id,
-            number: episodeIndex + 1,
-        }));
+        console.log(
+            "[EPISODES] Video groups:",
+            groups.length
+        );
+
+        groups.forEach(
+            (
+                episodeUrls,
+                episodeIndex
+            ) => {
+
+                const number =
+                    episodeIndex + 1;
+
+                console.log(
+                    `[EPISODES] Group ${episodeIndex} => episode ${number}`,
+                    episodeUrls
+                );
+
+                episodeDetails.push({
+                    id:
+                        episodeUrls.join(
+                            ","
+                        ),
+                    url:
+                        id,
+                    number
+                });
+            }
+        );
+
+        console.log(
+            "[EPISODES] Returned numbers:",
+            episodeDetails.map(
+                e => e.number
+            )
+        );
+
+        return episodeDetails;
     }
-
-    // ── Serveur d'épisode ────────────────────────────────────
 
     async findEpisodeServer(
         episode: EpisodeDetails,
         _server: string
     ): Promise<EpisodeServer> {
-        this._Server = _server;
 
-        const servers = episode.id.split(",");
+        this._Server =
+            _server;
 
-        const serverUrl = servers.find(server => {
-            const parts = server.split("/");
-            const domain = parts[2];
-            if (!domain) return false;
+        const servers =
+            episode.id.split(",");
 
-            const domainParts = domain.split(".");
-            const serverName =
-                domainParts.length >= 3
-                    ? domainParts[1]
-                    : domainParts[0];
+        const serverUrl =
+            servers.find(
+                server => {
 
-            return serverName === _server;
-        });
+                    const parts =
+                        server.split("/");
 
-        if (serverUrl && _server !== "") {
-            const videoSources = await this.HandleServerUrl(serverUrl);
+                    const domain =
+                        parts[2];
 
-            if (videoSources.length > 0) {
-                const referer = serverUrl
-                    .split("/")
-                    .slice(0, 3)
-                    .join("/");
+                    if (!domain) {
+                        return false;
+                    }
+
+                    const domainParts =
+                        domain.split(".");
+
+                    const serverName =
+                        domainParts.length >= 3
+                            ? domainParts[1]
+                            : domainParts[0];
+
+                    return (
+                        serverName ===
+                        _server
+                    );
+                }
+            );
+
+        if (
+            serverUrl &&
+            _server !== ""
+        ) {
+            console.log(
+                `Handling server URL: ${serverUrl}`
+            );
+
+            const videoSources =
+                await this.HandleServerUrl(
+                    serverUrl
+                );
+
+            if (
+                videoSources.length > 0
+            ) {
+                const referer =
+                    serverUrl
+                        .split("/")
+                        .slice(
+                            0,
+                            3
+                        )
+                        .join("/");
 
                 return {
-                    headers: { referer },
-                    server: _server,
-                    videoSources,
+                    headers: {
+                        referer:
+                            referer
+                    },
+                    server:
+                        _server,
+                    videoSources:
+                        videoSources
                 };
             }
         }
 
+        console.log(
+            `Server not found: ${_server}`
+        );
+
         return <EpisodeServer>{
             headers: {},
             server: "",
-            videoSources: [],
+            videoSources: []
         };
     }
 }
