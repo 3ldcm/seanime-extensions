@@ -1,16 +1,25 @@
 {
   "id": "chrome-cast-test",
-  "name": "Chrome Cast Test",
-  "version": "0.3.0",
+  "name": "Chrome Cast",
+  "version": "1.0.0",
   "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/chrome-cast/manifest.json",
   "language": "typescript",
   "type": "plugin",
-  "description": "Expose native HTML5 video controls and allow Remote Playback in Seanime Web",
+  "description": "Adds a Chromecast button to the Seanime video player",
   "author": "Bastien",
   "lang": "multi",
   "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/chrome-cast/plugin.ts",
   "plugin": {
     "version": "1",
-    "permissions": {}
+    "permissions": {
+      "allow": {
+        "unsafeFlags": [
+          {
+            "flag": "dom-script-manipulation",
+            "reason": "Required to inject Chromecast controls into the Seanime player."
+          }
+        ]
+      }
+    }
   }
 }
