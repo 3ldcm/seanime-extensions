@@ -151,7 +151,7 @@ function init() {
 
     if (!video.remote) {
       warn('Remote Playback API unavailable');
-      btn.textContent = '📺 N/A';
+      if (button) button.textContent = '📺 N/A';
       return;
     }
 
@@ -296,11 +296,12 @@ function init() {
 
         console.log('[Chrome Cast] Injecting runtime');
 
-        setTimeout(async () => {
-          try {
-            script.remove();
-          } catch (_) {}
-        }, 300);
+        // Script removal disabled — the IIFE runs immediately and the
+        // MutationObserver must persist. Removing the <script> tag is safe
+        // but pointless once the code has already executed.
+        // setTimeout(async () => {
+        //   try { script.remove(); } catch (_) {}
+        // }, 300);
       } catch (err) {
         console.error('[Chrome Cast] Failed to inject runtime:', err);
       }
