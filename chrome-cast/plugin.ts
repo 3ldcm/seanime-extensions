@@ -5,65 +5,60 @@ function init() {
             return `
 (() => {
 
-    const KEY = "__seanimeChromecast_2_4_6";
+    const KEY = "__seanimeChromecast_2_4_7";
 
     if (window[KEY]) {
-        console.log("[CAST-2.4.6] Runtime already loaded");
+        console.log("[CAST-2.4.7] Runtime already loaded");
         return;
     }
 
     const runtime = window[KEY] = {
         castVideo: null,
         castSrc: "",
-        casting: false,
         connected: false,
-        lastSeenSrc: "",
-        lastNewEpisodeSrc: ""
+
+        pendingVideo: null,
+        pendingSrc: "",
+
+        switching: false
     };
 
-    console.log("[CAST-2.4.6] Runtime loaded");
+    console.log("[CAST-2.4.7] Runtime loaded");
 
 
     /*
-     * ----------------------------------------------------------
+     * ==========================================================
      * VIDEO HELPERS
-     * ----------------------------------------------------------
+     * ==========================================================
      */
 
-    function getVideoSrc(video) {
+    function getSrc(video) {
+
         if (!video) {
             return "";
         }
 
         try {
-            if (
-                video.currentSrc &&
-                video.currentSrc.length > 5
-            ) {
+            if (video.currentSrc) {
                 return video.currentSrc;
             }
         } catch (e) {}
 
         try {
-            if (
-                video.src &&
-                video.src.length > 5
-            ) {
+            if (video.src) {
                 return video.src;
             }
         } catch (e) {}
 
         try {
+
             const source =
                 video.querySelector("source");
 
-            if (
-                source &&
-                source.src &&
-                source.src.length > 5
-            ) {
+            if (source && source.src) {
                 return source.src;
             }
+
         } catch (e) {}
 
         return "";
@@ -71,11 +66,15 @@ function init() {
 
 
     function getVideos() {
+
         try {
+
             return Array.from(
                 document.querySelectorAll("video")
             );
+
         } catch (e) {
+
             return [];
         }
     }
@@ -83,7 +82,8 @@ function init() {
 
     function findBestVideo() {
 
-        const videos = getVideos();
+        const videos =
+            getVideos();
 
         if (!videos.length) {
             return null;
@@ -91,19 +91,19 @@ function init() {
 
 
         /*
-         * Priorité au player actuellement en lecture.
+         * Priorité à un nouveau player en lecture.
          */
-        const playing = videos.find(function(video) {
+        const playing =
+            videos.find(function(video) {
 
-            const src = getVideoSrc(video);
+                return (
+                    video !== runtime.castVideo &&
+                    !video.paused &&
+                    !video.ended &&
+                    getSrc(video)
+                );
 
-            return (
-                src &&
-                !video.paused &&
-                !video.ended
-            );
-
-        });
+            });
 
         if (playing) {
             return playing;
@@ -111,34 +111,54 @@ function init() {
 
 
         /*
-         * Ensuite plus grand player visible.
+         * Player en lecture, même si c'est celui casté.
          */
-        const visible = videos
-            .map(function(video) {
-
-                return {
-                    video: video,
-                    rect: video.getBoundingClientRect()
-                };
-
-            })
-            .filter(function(item) {
+        const anyPlaying =
+            videos.find(function(video) {
 
                 return (
-                    item.rect.width > 100 &&
-                    item.rect.height > 100 &&
-                    getVideoSrc(item.video)
-                );
-
-            })
-            .sort(function(a, b) {
-
-                return (
-                    (b.rect.width * b.rect.height) -
-                    (a.rect.width * a.rect.height)
+                    !video.paused &&
+                    !video.ended &&
+                    getSrc(video)
                 );
 
             });
+
+        if (anyPlaying) {
+            return anyPlaying;
+        }
+
+
+        /*
+         * Plus grand player visible.
+         */
+        const visible =
+            videos
+                .map(function(video) {
+
+                    return {
+                        video: video,
+                        rect: video.getBoundingClientRect()
+                    };
+
+                })
+                .filter(function(item) {
+
+                    return (
+                        item.rect.width > 100 &&
+                        item.rect.height > 100 &&
+                        getSrc(item.video)
+                    );
+
+                })
+                .sort(function(a, b) {
+
+                    return (
+                        b.rect.width * b.rect.height -
+                        a.rect.width * a.rect.height
+                    );
+
+                });
 
 
         if (visible.length) {
@@ -146,20 +166,17 @@ function init() {
         }
 
 
-        /*
-         * Dernier recours.
-         */
         return videos.find(function(video) {
-            return !!getVideoSrc(video);
+            return !!getSrc(video);
         }) || null;
     }
 
 
 
     /*
-     * ----------------------------------------------------------
-     * REMOTE PLAYBACK EVENTS
-     * ----------------------------------------------------------
+     * ==========================================================
+     * REMOTE EVENTS
+     * ==========================================================
      */
 
     function attachRemoteEvents(video) {
@@ -167,17 +184,13 @@ function init() {
         if (
             !video ||
             !video.remote ||
-            video.__seanimeCast246Events
+            video.__cast247Events
         ) {
             return;
         }
 
-        video.__seanimeCast246Events = true;
 
-        console.log(
-            "[CAST-2.4.6] Remote events attached:",
-            getVideoSrc(video)
-        );
+        video.__cast247Events = true;
 
 
         video.remote.addEventListener(
@@ -185,10 +198,9 @@ function init() {
             function() {
 
                 console.log(
-                    "[CAST-2.4.6] Connecting"
+                    "[CAST-2.4.7] Connecting"
                 );
 
-                runtime.casting = true;
             }
         );
 
@@ -197,20 +209,25 @@ function init() {
             "connect",
             function() {
 
-                runtime.castVideo = video;
-                runtime.castSrc = getVideoSrc(video);
-                runtime.lastSeenSrc = runtime.castSrc;
-                runtime.connected = true;
-                runtime.casting = false;
+                runtime.castVideo =
+                    video;
+
+                runtime.castSrc =
+                    getSrc(video);
+
+                runtime.connected =
+                    true;
+
 
                 console.log(
-                    "[CAST-2.4.6] Connected"
+                    "[CAST-2.4.7] Connected"
                 );
 
                 console.log(
-                    "[CAST-2.4.6] Cast video stored:",
+                    "[CAST-2.4.7] Cast owner:",
                     runtime.castSrc
                 );
+
             }
         );
 
@@ -220,17 +237,25 @@ function init() {
             function() {
 
                 console.log(
-                    "[CAST-2.4.6] Disconnected"
+                    "[CAST-2.4.7] Disconnected"
                 );
 
-                if (runtime.castVideo === video) {
 
-                    runtime.castVideo = null;
-                    runtime.castSrc = "";
-                    runtime.connected = false;
-                    runtime.casting = false;
+                if (
+                    runtime.castVideo === video
+                ) {
+
+                    runtime.connected =
+                        false;
+
+                    runtime.castVideo =
+                        null;
+
+                    runtime.castSrc =
+                        "";
 
                 }
+
             }
         );
     }
@@ -238,42 +263,47 @@ function init() {
 
 
     /*
-     * ----------------------------------------------------------
-     * PREMIER CAST
-     * ----------------------------------------------------------
+     * ==========================================================
+     * CAST
+     * ==========================================================
      */
 
-    async function startCast() {
-
-        console.log(
-            "[CAST-2.4.6] Cast requested"
-        );
-
-
-        const video = findBestVideo();
+    async function castVideo(video) {
 
         if (!video) {
 
             console.error(
-                "[CAST-2.4.6] No video found"
+                "[CAST-2.4.7] No video"
             );
 
             return;
         }
 
 
-        const src = getVideoSrc(video);
+        const src =
+            getSrc(video);
+
+
+        if (!src) {
+
+            console.error(
+                "[CAST-2.4.7] No video source"
+            );
+
+            return;
+        }
 
 
         console.log(
-            "[CAST-2.4.6] Video src:",
+            "[CAST-2.4.7] Cast source:",
             src
         );
 
 
         try {
 
-            video.disableRemotePlayback = false;
+            video.disableRemotePlayback =
+                false;
 
         } catch (e) {}
 
@@ -281,7 +311,7 @@ function init() {
         if (!video.remote) {
 
             console.error(
-                "[CAST-2.4.6] Remote Playback unavailable"
+                "[CAST-2.4.7] RemotePlayback unavailable"
             );
 
             return;
@@ -292,33 +322,38 @@ function init() {
 
 
         /*
-         * Déjà connecté.
+         * Ce player est déjà connecté.
          */
         if (
-            video.remote.state === "connected"
+            video.remote.state ===
+            "connected"
         ) {
 
-            runtime.castVideo = video;
-            runtime.castSrc = src;
-            runtime.connected = true;
+            runtime.castVideo =
+                video;
+
+            runtime.castSrc =
+                src;
+
+            runtime.connected =
+                true;
+
 
             console.log(
-                "[CAST-2.4.6] Already connected"
+                "[CAST-2.4.7] Already connected"
             );
 
             return;
         }
 
 
-        /*
-         * Connexion déjà en cours.
-         */
         if (
-            video.remote.state === "connecting"
+            video.remote.state ===
+            "connecting"
         ) {
 
             console.log(
-                "[CAST-2.4.6] Already connecting"
+                "[CAST-2.4.7] Already connecting"
             );
 
             return;
@@ -327,63 +362,195 @@ function init() {
 
         try {
 
-            runtime.casting = true;
-
             console.log(
-                "[CAST-2.4.6] Opening device picker"
+                "[CAST-2.4.7] Opening device picker"
             );
+
 
             await video.remote.prompt();
 
+
             console.log(
-                "[CAST-2.4.6] Remote prompt completed"
+                "[CAST-2.4.7] Prompt completed"
             );
 
         } catch (error) {
 
-            runtime.casting = false;
-
             console.error(
-                "[CAST-2.4.6] Remote prompt error:",
+                "[CAST-2.4.7] Prompt error:",
                 error
             );
+
         }
     }
 
 
 
     /*
-     * ----------------------------------------------------------
-     * PROTECTION DOUBLE LECTURE
-     * ----------------------------------------------------------
+     * ==========================================================
+     * ACTION DU BOUTON
+     * ==========================================================
      */
 
-    function stopNewLocalPlayback(video, src) {
+    async function startCast() {
 
-        if (!runtime.connected) {
+        /*
+         * Si Seanime a déjà chargé l'épisode suivant,
+         * le bouton caste directement ce nouvel épisode.
+         */
+        if (
+            runtime.pendingVideo &&
+            runtime.pendingSrc
+        ) {
+
+            console.log(
+                "[CAST-2.4.7] Casting pending episode"
+            );
+
+
+            const video =
+                runtime.pendingVideo;
+
+
+            runtime.pendingVideo =
+                null;
+
+            runtime.pendingSrc =
+                "";
+
+
+            await castVideo(video);
+
+            return;
+        }
+
+
+        const video =
+            findBestVideo();
+
+
+        await castVideo(video);
+    }
+
+
+
+    /*
+     * ==========================================================
+     * NOUVEL EPISODE
+     * ==========================================================
+     */
+
+    function newEpisodeDetected(
+        video,
+        reason
+    ) {
+
+        if (
+            !runtime.connected ||
+            !runtime.castVideo
+        ) {
+            return;
+        }
+
+
+        if (!video) {
             return;
         }
 
 
         /*
-         * Ne jamais toucher au video qui possède
-         * actuellement la connexion Remote Playback.
+         * Important :
+         * le video RemotePlayback actuel n'est PAS
+         * considéré comme un nouvel épisode.
          */
         if (
-            runtime.castVideo &&
             video === runtime.castVideo
         ) {
             return;
         }
 
 
+        const src =
+            getSrc(video);
+
+
+        if (!src) {
+            return;
+        }
+
+
+        if (
+            src === runtime.castSrc
+        ) {
+            return;
+        }
+
+
+        /*
+         * Même épisode déjà détecté.
+         */
+        if (
+            src === runtime.pendingSrc
+        ) {
+
+            /*
+             * On s'assure quand même
+             * qu'il ne joue pas localement.
+             */
+            try {
+
+                if (!video.paused) {
+                    video.pause();
+                }
+
+            } catch (e) {}
+
+
+            return;
+        }
+
+
+        runtime.pendingVideo =
+            video;
+
+        runtime.pendingSrc =
+            src;
+
+
+        console.log(
+            "[CAST-2.4.7] =================================="
+        );
+
+        console.log(
+            "[CAST-2.4.7] NEW EPISODE"
+        );
+
+        console.log(
+            "[CAST-2.4.7] Reason:",
+            reason
+        );
+
+        console.log(
+            "[CAST-2.4.7] Old:",
+            runtime.castSrc
+        );
+
+        console.log(
+            "[CAST-2.4.7] New:",
+            src
+        );
+
+
+        /*
+         * Ne pas laisser Seanime jouer
+         * l'épisode 2 localement.
+         */
         try {
 
             if (!video.paused) {
 
                 console.log(
-                    "[CAST-2.4.6] Pause new local player:",
-                    src
+                    "[CAST-2.4.7] Pausing local new episode"
                 );
 
                 video.pause();
@@ -391,240 +558,204 @@ function init() {
             }
 
         } catch (e) {}
-    }
-
-
-
-    /*
-     * ----------------------------------------------------------
-     * DETECTION CHANGEMENT EPISODE
-     * ----------------------------------------------------------
-     */
-
-    function inspectVideo(video, reason) {
-
-        if (!video) {
-            return;
-        }
-
-
-        const src = getVideoSrc(video);
-
-        if (!src) {
-            return;
-        }
 
 
         /*
-         * Avant Cast : juste mémoriser.
+         * EXPERIMENTATION :
+         *
+         * On vérifie si Chrome considère encore
+         * l'ancien player RemotePlayback connecté.
+         *
+         * On ne change surtout PAS son src.
          */
-        if (!runtime.connected) {
-
-            runtime.lastSeenSrc = src;
-
-            attachRemoteEvents(video);
-
-            return;
-        }
-
-
-        /*
-         * Player actuellement casté.
-         */
-        if (
-            runtime.castVideo &&
-            video === runtime.castVideo
-        ) {
-
-            return;
-        }
-
-
-        /*
-         * Même URL que celle actuellement castée.
-         */
-        if (
-            src === runtime.castSrc
-        ) {
-
-            stopNewLocalPlayback(
-                video,
-                src
-            );
-
-            return;
-        }
-
-
-        /*
-         * Nouvelle URL détectée.
-         */
-        if (
-            src !== runtime.lastNewEpisodeSrc
-        ) {
-
-            runtime.lastNewEpisodeSrc = src;
-
+        try {
 
             console.log(
-                "[CAST-2.4.6] =================================="
+                "[CAST-2.4.7] Existing remote state:",
+                runtime.castVideo.remote.state
             );
 
-            console.log(
-                "[CAST-2.4.6] NEW EPISODE DETECTED"
-            );
-
-            console.log(
-                "[CAST-2.4.6] Reason:",
-                reason
-            );
-
-            console.log(
-                "[CAST-2.4.6] Current cast:",
-                runtime.castSrc
-            );
-
-            console.log(
-                "[CAST-2.4.6] New source:",
-                src
-            );
-
-            console.log(
-                "[CAST-2.4.6] =================================="
-            );
-        }
+        } catch (e) {}
 
 
-        /*
-         * Empêche le nouvel épisode de partir
-         * simultanément sur le lecteur interne.
-         */
-        stopNewLocalPlayback(
-            video,
-            src
+        console.log(
+            "[CAST-2.4.7] Next episode ready"
+        );
+
+        console.log(
+            "[CAST-2.4.7] =================================="
         );
     }
 
 
 
     /*
-     * ----------------------------------------------------------
-     * EVENEMENTS MEDIA
-     * ----------------------------------------------------------
+     * ==========================================================
+     * MEDIA EVENTS
+     * ==========================================================
      */
 
-    function mediaEventHandler(event) {
+    function mediaHandler(event) {
 
-        const video = event.target;
+        const video =
+            event.target;
+
 
         if (
             !video ||
             !video.tagName ||
-            video.tagName.toLowerCase() !== "video"
+            video.tagName.toLowerCase() !==
+            "video"
         ) {
+
             return;
         }
 
 
-        inspectVideo(
-            video,
-            event.type
-        );
+        attachRemoteEvents(video);
+
+
+        if (runtime.connected) {
+
+            newEpisodeDetected(
+                video,
+                event.type
+            );
+
+        }
     }
 
 
     document.addEventListener(
         "play",
-        mediaEventHandler,
+        mediaHandler,
         true
     );
 
 
     document.addEventListener(
         "playing",
-        mediaEventHandler,
+        mediaHandler,
         true
     );
 
 
     document.addEventListener(
         "loadstart",
-        mediaEventHandler,
+        mediaHandler,
         true
     );
 
 
     document.addEventListener(
         "loadedmetadata",
-        mediaEventHandler,
-        true
-    );
-
-
-    document.addEventListener(
-        "canplay",
-        mediaEventHandler,
+        mediaHandler,
         true
     );
 
 
 
     /*
-     * ----------------------------------------------------------
+     * ==========================================================
      * MUTATION OBSERVER
-     * ----------------------------------------------------------
+     * ==========================================================
      */
 
-    const observer = new MutationObserver(
-        function(mutations) {
+    const observer =
+        new MutationObserver(
+            function(mutations) {
 
-            mutations.forEach(
-                function(mutation) {
+                mutations.forEach(
+                    function(mutation) {
 
-                    /*
-                     * src changé.
-                     */
-                    if (
-                        mutation.type === "attributes"
-                    ) {
+                        if (
+                            mutation.type ===
+                            "childList"
+                        ) {
 
-                        const target =
-                            mutation.target;
+                            mutation.addedNodes
+                                .forEach(
+                                    function(node) {
+
+                                        if (!node) {
+                                            return;
+                                        }
+
+
+                                        if (
+                                            node.tagName &&
+                                            node.tagName
+                                                .toLowerCase() ===
+                                            "video"
+                                        ) {
+
+                                            attachRemoteEvents(
+                                                node
+                                            );
+
+
+                                            newEpisodeDetected(
+                                                node,
+                                                "new-video"
+                                            );
+
+                                        }
+
+
+                                        if (
+                                            node.querySelectorAll
+                                        ) {
+
+                                            const videos =
+                                                node.querySelectorAll(
+                                                    "video"
+                                                );
+
+
+                                            videos.forEach(
+                                                function(video) {
+
+                                                    attachRemoteEvents(
+                                                        video
+                                                    );
+
+
+                                                    newEpisodeDetected(
+                                                        video,
+                                                        "new-player"
+                                                    );
+
+                                                }
+                                            );
+
+                                        }
+
+                                    }
+                                );
+
+                        }
 
 
                         if (
-                            target &&
-                            target.tagName
+                            mutation.type ===
+                            "attributes"
                         ) {
 
-                            const tag =
+                            const target =
+                                mutation.target;
+
+
+                            if (
+                                target &&
+                                target.tagName &&
                                 target.tagName
-                                    .toLowerCase();
-
-
-                            if (
-                                tag === "video"
+                                    .toLowerCase() ===
+                                "video"
                             ) {
 
-                                inspectVideo(
+                                newEpisodeDetected(
                                     target,
-                                    "video-src-change"
-                                );
-
-                            }
-
-
-                            if (
-                                tag === "source" &&
-                                target.parentElement &&
-                                target.parentElement.tagName &&
-                                target.parentElement.tagName
-                                    .toLowerCase() === "video"
-                            ) {
-
-                                inspectVideo(
-                                    target.parentElement,
-                                    "source-src-change"
+                                    "src-change"
                                 );
 
                             }
@@ -632,79 +763,10 @@ function init() {
                         }
 
                     }
+                );
 
-
-                    /*
-                     * Nouveau player ajouté.
-                     */
-                    if (
-                        mutation.type === "childList"
-                    ) {
-
-                        mutation.addedNodes
-                            .forEach(
-                                function(node) {
-
-                                    if (!node) {
-                                        return;
-                                    }
-
-
-                                    if (
-                                        node.tagName &&
-                                        node.tagName
-                                            .toLowerCase() === "video"
-                                    ) {
-
-                                        attachRemoteEvents(
-                                            node
-                                        );
-
-                                        inspectVideo(
-                                            node,
-                                            "new-video"
-                                        );
-
-                                    }
-
-
-                                    if (
-                                        node.querySelectorAll
-                                    ) {
-
-                                        const videos =
-                                            node.querySelectorAll(
-                                                "video"
-                                            );
-
-
-                                        videos.forEach(
-                                            function(video) {
-
-                                                attachRemoteEvents(
-                                                    video
-                                                );
-
-                                                inspectVideo(
-                                                    video,
-                                                    "new-player"
-                                                );
-
-                                            }
-                                        );
-
-                                    }
-
-                                }
-                            );
-
-                    }
-
-                }
-            );
-
-        }
-    );
+            }
+        );
 
 
     observer.observe(
@@ -722,18 +784,16 @@ function init() {
 
 
     /*
-     * ----------------------------------------------------------
-     * POLLING
-     * ----------------------------------------------------------
-     *
-     * Sécurité pour les players qui changent currentSrc
-     * sans mutation DOM exploitable.
+     * ==========================================================
+     * POLLING DE SECOURS
+     * ==========================================================
      */
 
     setInterval(
         function() {
 
-            const videos = getVideos();
+            const videos =
+                getVideos();
 
 
             videos.forEach(
@@ -744,10 +804,18 @@ function init() {
                     );
 
 
-                    inspectVideo(
-                        video,
-                        "poll"
-                    );
+                    if (
+                        runtime.connected &&
+                        video !==
+                        runtime.castVideo
+                    ) {
+
+                        newEpisodeDetected(
+                            video,
+                            "poll"
+                        );
+
+                    }
 
                 }
             );
@@ -759,24 +827,17 @@ function init() {
 
 
     /*
-     * ----------------------------------------------------------
-     * EVENEMENT TRAY
-     * ----------------------------------------------------------
+     * ==========================================================
+     * UNIQUE EVENT LISTENER
+     * ==========================================================
      */
 
     window.addEventListener(
-        "seanime-cast-2-4-6",
-        function() {
-
-            startCast();
-
-        }
+        "seanime-cast-247",
+        startCast
     );
 
 
-    /*
-     * Initialisation des vidéos déjà présentes.
-     */
     getVideos().forEach(
         function(video) {
 
@@ -794,18 +855,12 @@ function init() {
 
 
 
-        /*
-         * ----------------------------------------------------------
-         * INJECTION
-         * ----------------------------------------------------------
-         */
-
         async function injectRuntime() {
 
             try {
 
                 console.log(
-                    "[CAST-2.4.6] Plugin loaded"
+                    "[CAST-2.4.7] Plugin loaded"
                 );
 
 
@@ -818,7 +873,7 @@ function init() {
                 if (!head) {
 
                     console.error(
-                        "[CAST-2.4.6] Head not found"
+                        "[CAST-2.4.7] Head not found"
                     );
 
                     return;
@@ -842,13 +897,13 @@ function init() {
 
 
                 console.log(
-                    "[CAST-2.4.6] Runtime injected"
+                    "[CAST-2.4.7] Runtime injected"
                 );
 
             } catch (error) {
 
                 console.error(
-                    "[CAST-2.4.6] Runtime injection error:",
+                    "[CAST-2.4.7] Injection error:",
                     error
                 );
 
@@ -858,11 +913,8 @@ function init() {
 
 
         /*
-         * ----------------------------------------------------------
-         * DECLENCHEMENT CAST
-         * ----------------------------------------------------------
+         * Un seul dispatch par clic.
          */
-
         async function triggerCast() {
 
             try {
@@ -884,13 +936,9 @@ function init() {
                     );
 
 
-                script.setText(`
-                            window.dispatchEvent(
-                                new CustomEvent(
-                                    "seanime-cast-2-4-6"
-                                )
-                            );
-                        `);
+                script.setText(
+                    'window.dispatchEvent(new CustomEvent("seanime-cast-247"));'
+                );
 
 
                 await head.append(
@@ -900,7 +948,7 @@ function init() {
             } catch (error) {
 
                 console.error(
-                    "[CAST-2.4.6] Trigger error:",
+                    "[CAST-2.4.7] Trigger error:",
                     error
                 );
 
@@ -910,9 +958,9 @@ function init() {
 
 
         /*
-         * ----------------------------------------------------------
+         * ==========================================================
          * TRAY
-         * ----------------------------------------------------------
+         * ==========================================================
          */
 
         const tray =
@@ -946,7 +994,7 @@ function init() {
                             "📡 Caster",
                             {
                                 onClick:
-                                    "chromecast-2-4-6",
+                                    "chromecast-247-start",
 
                                 intent:
                                     "success"
@@ -963,11 +1011,11 @@ function init() {
 
 
         ctx.registerEventHandler(
-            "chromecast-2-4-6",
+            "chromecast-247-start",
             async () => {
 
                 console.log(
-                    "[CAST-2.4.6] Tray button clicked"
+                    "[CAST-2.4.7] Tray click"
                 );
 
 
