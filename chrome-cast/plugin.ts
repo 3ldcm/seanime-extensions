@@ -5,70 +5,31 @@ function init() {
             return `
 (() => {
 
-    const KEY = "__seanimeCastAutoEpisode";
+    const KEY = "__seanimeRemoteCastPersistent";
 
     if (window[KEY]) {
         console.log("[Chrome Cast] Runtime already loaded");
         return;
     }
 
-    window[KEY] = {
-        lastSrc: "",
-        sdkReady: false,
-        castContext: null
+    const runtime = window[KEY] = {
+        castVideo: null,
+        castSrc: "",
+        switching: false
     };
 
-    const runtime = window[KEY];
-
-    console.log("[Chrome Cast] Runtime loaded");
+    console.log("[Chrome Cast] Persistent Remote Playback runtime loaded");
 
 
-    function findVideo() {
-
-        const videos = Array.from(
+    function getVideos() {
+        return Array.from(
             document.querySelectorAll("video")
         );
-
-        if (!videos.length) {
-            return null;
-        }
-
-        const playing = videos.find(video =>
-            !video.paused &&
-            !video.ended
-        );
-
-        if (playing) {
-            return playing;
-        }
-
-        const visible = videos
-            .map(video => ({
-                video,
-                rect: video.getBoundingClientRect()
-            }))
-            .filter(item =>
-                item.rect.width > 100 &&
-                item.rect.height > 100
-            )
-            .sort((a, b) =>
-                (b.rect.width * b.rect.height) -
-                (a.rect.width * a.rect.height)
-            );
-
-        if (visible.length) {
-            return visible[0].video;
-        }
-
-        return videos[0];
     }
 
 
     function getSrc(video) {
-
-        if (!video) {
-            return "";
-        }
+        if (!video) return "";
 
         return (
             video.currentSrc ||
@@ -79,30 +40,151 @@ function init() {
     }
 
 
-    /*
-     * REMOTE PLAYBACK
-     *
-     * Sert uniquement au premier Cast
-     * puisque cette méthode fonctionne déjà chez toi.
-     */
-    async function startRemoteCast() {
+    function findCurrentSeanimeVideo() {
 
-        const video = findVideo();
+        const videos = getVideos();
+
+        if (!videos.length) {
+            return null;
+        }
+
+
+        /*
+         * Ne pas reprendre notre ancien
+         * élément connecté si Seanime en a créé un nouveau.
+         */
+        const candidates =
+            videos.filter(video =>
+                video !== runtime.castVideo
+            );
+
+
+        const list =
+            candidates.length
+                ? candidates
+                : videos;
+
+
+        const playing =
+            list.find(video =>
+                !video.paused &&
+                !video.ended &&
+                getSrc(video)
+            );
+
+
+        if (playing) {
+            return playing;
+        }
+
+
+        const visible =
+            list
+                .map(video => ({
+                    video: video,
+                    rect: video.getBoundingClientRect()
+                }))
+                .filter(item =>
+                    item.rect.width > 100 &&
+                    item.rect.height > 100 &&
+                    getSrc(item.video)
+                )
+                .sort((a, b) =>
+                    (b.rect.width * b.rect.height) -
+                    (a.rect.width * a.rect.height)
+                );
+
+
+        if (visible.length) {
+            return visible[0].video;
+        }
+
+
+        return list.find(video => getSrc(video)) || null;
+    }
+
+
+
+    function attachCastEvents(video) {
+
+        if (
+            !video ||
+            !video.remote ||
+            video.__seanimeCastEvents
+        ) {
+            return;
+        }
+
+
+        video.__seanimeCastEvents = true;
+
+
+        video.remote.addEventListener(
+            "connecting",
+            function() {
+                console.log("[Chrome Cast] Connecting");
+            }
+        );
+
+
+        video.remote.addEventListener(
+            "connect",
+            function() {
+
+                console.log("[Chrome Cast] Connected");
+
+                runtime.castVideo = video;
+                runtime.castSrc = getSrc(video);
+
+                console.log(
+                    "[Chrome Cast] Cast owner stored:",
+                    runtime.castSrc
+                );
+            }
+        );
+
+
+        video.remote.addEventListener(
+            "disconnect",
+            function() {
+
+                console.log("[Chrome Cast] Disconnected");
+
+                if (runtime.castVideo === video) {
+                    runtime.castVideo = null;
+                    runtime.castSrc = "";
+                }
+            }
+        );
+    }
+
+
+
+    async function startCast() {
+
+        const video =
+            findCurrentSeanimeVideo();
 
         if (!video) {
             console.error("[Chrome Cast] No video found");
             return;
         }
 
-        const src = getSrc(video);
 
-        console.log("[Chrome Cast] First Cast src:", src);
+        const src =
+            getSrc(video);
 
-        runtime.lastSrc = src;
 
-        try {
-            video.disableRemotePlayback = false;
-        } catch (e) {}
+        console.log(
+            "[Chrome Cast] Cast requested:",
+            src
+        );
+
+
+        video.disableRemotePlayback = false;
+
+        attachCastEvents(video);
+
 
         if (!video.remote) {
             console.error(
@@ -111,15 +193,25 @@ function init() {
             return;
         }
 
+
+        /*
+         * Si CE video est déjà connecté,
+         * inutile de rouvrir le picker.
+         */
         if (
-            video.remote.state === "connected" ||
-            video.remote.state === "connecting"
+            video.remote.state === "connected"
         ) {
+
+            runtime.castVideo = video;
+            runtime.castSrc = src;
+
             console.log(
-                "[Chrome Cast] Remote already connected"
+                "[Chrome Cast] Already connected"
             );
+
             return;
         }
+
 
         try {
 
@@ -129,443 +221,305 @@ function init() {
 
             await video.remote.prompt();
 
-            console.log(
-                "[Chrome Cast] Remote prompt completed"
-            );
-
         } catch (error) {
 
             console.error(
-                "[Chrome Cast] Remote prompt error:",
+                "[Chrome Cast] Prompt error:",
                 error
             );
         }
     }
 
 
+
     /*
-     * GOOGLE CAST SDK
-     *
-     * Utilisé pour récupérer la session active
-     * et remplacer le média sans déconnexion.
+     * Remplace le média de l'élément qui
+     * possède déjà la connexion Remote Playback.
      */
-    function initCastSdk() {
+    async function switchRemoteMedia(newVideo, newSrc) {
+
+        if (runtime.switching) {
+            return;
+        }
+
+
+        const castVideo =
+            runtime.castVideo;
+
+
+        if (
+            !castVideo ||
+            !castVideo.remote ||
+            castVideo.remote.state !== "connected"
+        ) {
+
+            console.log(
+                "[Chrome Cast] No connected cast owner"
+            );
+
+            return;
+        }
+
+
+        if (
+            !newSrc ||
+            newSrc === runtime.castSrc
+        ) {
+            return;
+        }
+
+
+        runtime.switching = true;
+
+
+        console.log(
+            "[Chrome Cast] NEW EPISODE"
+        );
+
+        console.log(
+            "[Chrome Cast] Old:",
+            runtime.castSrc
+        );
+
+        console.log(
+            "[Chrome Cast] New:",
+            newSrc
+        );
+
 
         try {
 
+            /*
+             * Arrête le nouvel épisode local.
+             */
             if (
-                typeof cast === "undefined" ||
-                !cast.framework
+                newVideo &&
+                newVideo !== castVideo
             ) {
-                return false;
+                try {
+                    newVideo.pause();
+                } catch (e) {}
             }
 
-            const castContext =
-                cast.framework.CastContext.getInstance();
 
-            castContext.setOptions({
-                receiverApplicationId:
-                    chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+            /*
+             * On conserve l'élément qui possède
+             * la connexion Chromecast.
+             */
+            castVideo.disableRemotePlayback = false;
 
-                autoJoinPolicy:
-                    chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
-            });
 
-            runtime.castContext = castContext;
-            runtime.sdkReady = true;
+            /*
+             * Remplacement de la source.
+             */
+            castVideo.src = newSrc;
+
 
             console.log(
-                "[Chrome Cast SDK] Ready"
+                "[Chrome Cast] Source replaced on connected video"
             );
 
-            return true;
+
+            castVideo.load();
+
+
+            /*
+             * La doc Remote Playback indique que,
+             * connecté, les commandes média sont
+             * exécutées sur le périphérique distant.
+             */
+            await castVideo.play();
+
+
+            runtime.castSrc = newSrc;
+
+
+            console.log(
+                "[Chrome Cast] New episode sent to remote"
+            );
+
 
         } catch (error) {
 
             console.error(
-                "[Chrome Cast SDK] Init error:",
+                "[Chrome Cast] Episode switch failed:",
                 error
             );
 
-            return false;
+        } finally {
+
+            setTimeout(
+                function() {
+                    runtime.switching = false;
+                },
+                1000
+            );
         }
     }
 
 
-    window.__onGCastApiAvailable =
-        function(isAvailable) {
-
-            console.log(
-                "[Chrome Cast SDK] API available:",
-                isAvailable
-            );
-
-            if (isAvailable) {
-                initCastSdk();
-            }
-        };
-
 
     /*
-     * Charge le SDK officiel Google.
+     * Détection changement épisode.
      */
-    if (
-        !document.querySelector(
-            "script[data-seanime-google-cast-sdk]"
-        )
-    ) {
+    setInterval(
+        function() {
 
-        const sdk =
-            document.createElement("script");
+            if (
+                !runtime.castVideo ||
+                !runtime.castVideo.remote ||
+                runtime.castVideo.remote.state !== "connected"
+            ) {
+                return;
+            }
 
-        sdk.src =
-            "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1";
 
-        sdk.async = true;
+            const currentVideo =
+                findCurrentSeanimeVideo();
 
-        sdk.setAttribute(
-            "data-seanime-google-cast-sdk",
-            "1"
-        );
 
-        sdk.onload = function() {
+            if (!currentVideo) {
+                return;
+            }
 
-            console.log(
-                "[Chrome Cast SDK] Script loaded"
-            );
+
+            const src =
+                getSrc(currentVideo);
+
+
+            if (
+                !src ||
+                src === runtime.castSrc
+            ) {
+                return;
+            }
+
 
             /*
-             * Fallback au cas où le callback Google
-             * ne serait pas déclenché.
+             * Seanime a chargé une autre URL.
+             */
+            console.log(
+                "[Chrome Cast] Different Seanime source detected"
+            );
+
+
+            /*
+             * Petite attente :
+             * évite d'envoyer une URL intermédiaire
+             * pendant le chargement de l'épisode.
              */
             setTimeout(
                 function() {
 
-                    if (!runtime.sdkReady) {
-                        initCastSdk();
+                    const video =
+                        findCurrentSeanimeVideo();
+
+                    const finalSrc =
+                        getSrc(video);
+
+
+                    if (
+                        finalSrc &&
+                        finalSrc !== runtime.castSrc
+                    ) {
+
+                        switchRemoteMedia(
+                            video,
+                            finalSrc
+                        );
                     }
 
                 },
                 500
             );
-        };
 
-        sdk.onerror = function(error) {
+        },
+        750
+    );
 
-            console.error(
-                "[Chrome Cast SDK] Script loading failed:",
-                error
-            );
-        };
-
-        document.head.appendChild(sdk);
-    }
 
 
     /*
-     * Charge une nouvelle vidéo dans
-     * une session Cast déjà active.
+     * Surveille également si Seanime
+     * remplace complètement le player.
      */
-    async function loadOnExistingCast(src) {
+    const observer =
+        new MutationObserver(
+            function() {
 
-        if (
-            !runtime.sdkReady ||
-            !runtime.castContext
-        ) {
+                const videos =
+                    getVideos();
 
-            console.log(
-                "[Chrome Cast SDK] SDK not ready"
-            );
+                videos.forEach(
+                    function(video) {
+                        attachCastEvents(video);
+                    }
+                );
 
-            return false;
-        }
-
-
-        const session =
-            runtime.castContext.getCurrentSession();
-
-        if (!session) {
-
-            console.log(
-                "[Chrome Cast SDK] No active session"
-            );
-
-            return false;
-        }
-
-
-        console.log(
-            "[Chrome Cast SDK] Existing session found"
+            }
         );
 
 
-        try {
-
-            const type =
-                src.indexOf(".m3u8") !== -1
-                ? "application/x-mpegURL"
-                : "video/mp4";
-
-
-            const mediaInfo =
-                new chrome.cast.media.MediaInfo(
-                    src,
-                    type
-                );
-
-
-            const request =
-                new chrome.cast.media.LoadRequest(
-                    mediaInfo
-                );
-
-
-            request.autoplay = true;
-
-
-            console.log(
-                "[Chrome Cast SDK] Loading new episode:",
-                src
-            );
-
-
-            await session.loadMedia(request);
-
-
-            console.log(
-                "[Chrome Cast SDK] New episode loaded"
-            );
-
-
-            runtime.lastSrc = src;
-
-
-            return true;
-
-        } catch (error) {
-
-            console.error(
-                "[Chrome Cast SDK] loadMedia error:",
-                error
-            );
-
-
-            return false;
+    observer.observe(
+        document.documentElement,
+        {
+            childList: true,
+            subtree: true
         }
-    }
+    );
 
 
-    /*
-     * Clic sur l'icône Cast.
-     */
+
     window.addEventListener(
         "seanime-cast-start",
-        async function() {
+        function() {
 
-            const video =
-                findVideo();
-
-            if (!video) {
-                return;
-            }
-
-
-            const src =
-                getSrc(video);
-
-
-            /*
-             * Si on a déjà une CastSession,
-             * on l'utilise directement.
-             */
-            if (
-                runtime.sdkReady &&
-                runtime.castContext &&
-                runtime.castContext.getCurrentSession()
-            ) {
-
-                console.log(
-                    "[Chrome Cast] Existing Cast session"
-                );
-
-
-                const loaded =
-                    await loadOnExistingCast(src);
-
-
-                if (loaded) {
-
-                    try {
-                        video.pause();
-                    } catch (e) {}
-
-                    return;
-                }
-            }
-
-
-            /*
-             * Sinon premier Cast classique.
-             */
-            await startRemoteCast();
+            startCast();
 
         }
     );
 
 
-    /*
-     * Surveillance des changements d'épisode.
-     */
-    setInterval(
-        async function() {
-
-            const video =
-                findVideo();
-
-            if (!video) {
-                return;
-            }
-
-
-            const src =
-                getSrc(video);
-
-            if (!src) {
-                return;
-            }
-
-
-            /*
-             * Première détection
-             */
-            if (!runtime.lastSrc) {
-                runtime.lastSrc = src;
-                return;
-            }
-
-
-            /*
-             * Pas de changement
-             */
-            if (src === runtime.lastSrc) {
-                return;
-            }
-
-
-            console.log(
-                "[Chrome Cast] New episode detected"
-            );
-
-            console.log(
-                "[Chrome Cast] Old:",
-                runtime.lastSrc
-            );
-
-            console.log(
-                "[Chrome Cast] New:",
-                src
-            );
-
-
-            /*
-             * Très important :
-             * on vérifie d'abord si une vraie
-             * session Cast est toujours active.
-             */
-            if (
-                runtime.sdkReady &&
-                runtime.castContext
-            ) {
-
-                const session =
-                    runtime.castContext.getCurrentSession();
-
-
-                if (session) {
-
-                    console.log(
-                        "[Chrome Cast] Cast session still connected"
-                    );
-
-
-                    /*
-                     * Stop lecture locale.
-                     */
-                    try {
-                        video.pause();
-                    } catch (e) {}
-
-
-                    const success =
-                        await loadOnExistingCast(src);
-
-
-                    if (success) {
-                        return;
-                    }
-                }
-            }
-
-
-            /*
-             * Pas de session Cast trouvée.
-             *
-             * On mémorise la nouvelle source,
-             * mais on ne relance PAS automatiquement
-             * le picker.
-             */
-            console.log(
-                "[Chrome Cast] No existing Cast session"
-            );
-
-
-            runtime.lastSrc = src;
-
-        },
-        1000
+    getVideos().forEach(
+        function(video) {
+            attachCastEvents(video);
+        }
     );
+
 
 })();
 `;
         }
 
 
+
         async function injectRuntime() {
 
-            try {
+            const head =
+                await ctx.dom.queryOne("head");
 
-                const head =
-                    await ctx.dom.queryOne("head");
-
-                if (!head) {
-                    return;
-                }
-
-
-                const script =
-                    await ctx.dom.createElement("script");
-
-
-                script.setText(
-                    getCastScript()
-                );
-
-
-                await head.append(script);
-
-
-                console.log(
-                    "[Chrome Cast] Runtime injected"
-                );
-
-            } catch (error) {
-
-                console.error(
-                    "[Chrome Cast] Runtime injection error:",
-                    error
-                );
+            if (!head) {
+                return;
             }
+
+
+            const script =
+                await ctx.dom.createElement("script");
+
+
+            script.setText(
+                getCastScript()
+            );
+
+
+            await head.append(script);
+
+
+            console.log(
+                "[Chrome Cast] Runtime injected"
+            );
         }
+
 
 
         async function triggerCast() {
@@ -595,9 +549,7 @@ function init() {
         }
 
 
-        /*
-         * TRAY
-         */
+
         const tray = ctx.newTray({
 
             tooltipText: "Chromecast",
@@ -608,6 +560,7 @@ function init() {
             withContent: true
 
         });
+
 
 
         tray.render(() => {
@@ -638,6 +591,7 @@ function init() {
         });
 
 
+
         ctx.registerEventHandler(
             "chromecast-start",
             async () => {
@@ -646,10 +600,10 @@ function init() {
                     "[Chrome Cast] Tray event"
                 );
 
-
                 await triggerCast();
             }
         );
+
 
 
         ctx.dom.onReady(
@@ -658,7 +612,6 @@ function init() {
                 console.log(
                     "[Chrome Cast] Plugin loaded"
                 );
-
 
                 await injectRuntime();
             }
