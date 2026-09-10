@@ -330,12 +330,12 @@ function init() {
 
 
                 script.setText(`
-                            window.dispatchEvent(
-                                new CustomEvent(
-                                    "seanime-cast-from-tray"
-                                )
-                            );
-                        `);
+                    window.dispatchEvent(
+                        new CustomEvent(
+                            "seanime-cast-from-tray"
+                        )
+                    );
+                `);
 
 
                 await head.append(script);
