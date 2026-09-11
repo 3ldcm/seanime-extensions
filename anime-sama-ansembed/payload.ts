@@ -69,8 +69,14 @@ class Provider {
     private static readonly VIDEO_URL_RE =
         /(?:https?:\/\/|\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
 
+    private static readonly VIDMOLY_FILE_RE =
+        /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i;
+
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
+
+    private readonly SEANIME_API =
+        "/api/v1/proxy?url=";
 
     _Server = "";
 
@@ -81,15 +87,23 @@ class Provider {
         };
     }
 
-    /*
-     * IMPORTANT
-     * On ne repasse plus par /api/v1/proxy.
-     * Ça évite le 401 UNAUTHENTICATED sur le LXC.
-     */
     private proxyFetch(
-        targetUrl: string
+        targetUrl: string,
+        headers?: Record<string, string>
     ): Promise<Response> {
-        return fetch(targetUrl);
+        if (!headers) {
+            return fetch(targetUrl);
+        }
+
+        let url =
+            `${this.SEANIME_API}${encodeURIComponent(targetUrl)}`;
+
+        url +=
+            `&headers=${encodeURIComponent(
+                JSON.stringify(headers)
+            )}`;
+
+        return fetch(url);
     }
 
     private stripComments(
@@ -967,6 +981,256 @@ class Provider {
         return videos;
     }
 
+    private async HandleAnsEmbedUrl(
+        serverUrl: string
+    ): Promise<VideoSource[]> {
+
+        const req =
+            await this.proxyFetch(
+                serverUrl,
+                {
+                    referer:
+                        "https://anime-sama.to/"
+                }
+            );
+
+        if (!req.ok) {
+            console.log(
+                `[ANSEMBED] HTTP ${req.status}`
+            );
+
+            return [];
+        }
+
+        const html =
+            await req.text();
+
+        const lowerHtml =
+            html.toLowerCase();
+
+        console.log(
+            `[ANSEMBED] HTML length: ${html.length}`
+        );
+
+        console.log(
+            `[ANSEMBED] VidMoly markers: ${lowerHtml.includes("vidmoly")}`
+        );
+
+        console.log(
+            `[ANSEMBED] JWPlayer markers: ${lowerHtml.includes("jwplayer")}`
+        );
+
+        console.log(
+            `[ANSEMBED] file marker: ${/file\s*:/.test(html)}`
+        );
+
+        console.log(
+            `[ANSEMBED] m3u8 marker: ${html.includes(".m3u8")}`
+        );
+
+        console.log(
+            `[ANSEMBED] packed marker: ${html.includes("eval(function")}`
+        );
+
+        function unpack(
+            p: string,
+            a: number,
+            c: number,
+            k: string[]
+        ): string {
+
+            while (c--) {
+                if (k[c]) {
+                    p =
+                        p.replace(
+                            new RegExp(
+                                "\\b" +
+                                c.toString(a) +
+                                "\\b",
+                                "g"
+                            ),
+                            k[c]
+                        );
+                }
+            }
+
+            return p;
+        }
+
+        let unpacked:
+            string | undefined;
+
+        let match:
+            RegExpExecArray | null;
+
+        Provider.SCRIPT_TAG_RE.lastIndex = 0;
+
+        while (
+            (
+                match =
+                    Provider.SCRIPT_TAG_RE.exec(
+                        html
+                    )
+            ) !== null
+        ) {
+            const script =
+                match[1];
+
+            if (
+                script.includes(
+                    "eval(function(p,a,c,k,e,d)"
+                )
+            ) {
+                const unpackMatch =
+                    script.match(
+                        Provider.PACKER_RE
+                    );
+
+                if (unpackMatch) {
+                    const packed =
+                        unpackMatch[1];
+
+                    const base =
+                        parseInt(
+                            unpackMatch[2],
+                            10
+                        );
+
+                    const count =
+                        parseInt(
+                            unpackMatch[3],
+                            10
+                        );
+
+                    const dict =
+                        unpackMatch[4]
+                            .split("|");
+
+                    unpacked =
+                        unpack(
+                            packed,
+                            base,
+                            count,
+                            dict
+                        );
+
+                    break;
+                }
+            }
+        }
+
+        let searchSource =
+            html;
+
+        if (unpacked) {
+            searchSource +=
+                "\n" + unpacked;
+        }
+
+        const fileMatch =
+            searchSource.match(
+                Provider.VIDMOLY_FILE_RE
+            );
+
+        if (fileMatch) {
+            let videoUrl =
+                fileMatch[1];
+
+            videoUrl =
+                videoUrl
+                    .replace(/\\\//g, "/")
+                    .replace(/&amp;/g, "&");
+
+            if (
+                videoUrl.startsWith("/") &&
+                !videoUrl.startsWith("//")
+            ) {
+                videoUrl =
+                    new URL(serverUrl).origin +
+                    videoUrl;
+
+            } else if (
+                videoUrl.startsWith("//")
+            ) {
+                videoUrl =
+                    `https:${videoUrl}`;
+            }
+
+            console.log(
+                "[ANSEMBED] HLS source found"
+            );
+
+            return [
+                {
+                    url:
+                        videoUrl,
+                    type:
+                        "m3u8" as VideoSourceType,
+                    quality:
+                        "ansembed - auto",
+                    subtitles:
+                        []
+                }
+            ];
+        }
+
+        const videoUrls =
+            searchSource.match(
+                Provider.VIDEO_URL_RE
+            ) || [];
+
+        const videos:
+            VideoSource[] = [];
+
+        const origin =
+            new URL(serverUrl)
+                .origin;
+
+        for (
+            const url of videoUrls
+        ) {
+            let finalUrl =
+                url
+                    .replace(/\\\//g, "/")
+                    .replace(/&amp;/g, "&");
+
+            if (
+                finalUrl.startsWith("/") &&
+                !finalUrl.startsWith("//")
+            ) {
+                finalUrl =
+                    origin +
+                    finalUrl;
+
+            } else if (
+                finalUrl.startsWith("//")
+            ) {
+                finalUrl =
+                    `https:${finalUrl}`;
+            }
+
+            const type =
+                finalUrl.includes(
+                    ".m3u8"
+                )
+                    ? "m3u8"
+                    : "mp4";
+
+            videos.push({
+                url:
+                    finalUrl,
+                type:
+                    type as VideoSourceType,
+                quality:
+                    "ansembed - unknown",
+                subtitles:
+                    []
+            });
+        }
+
+        return videos;
+    }
+
     async search(
         opts: SearchOptions
     ): Promise<SearchResult[]> {
@@ -1367,15 +1631,15 @@ class Provider {
         this._Server =
             "ansembed";
 
-        const servers = [
-            ...new Set(
+        const servers: string[] = [
+            ...new Set<string>(
                 episode.id
                     .split(",")
                     .map(
-                        url => url.trim()
+                        (url: string) => url.trim()
                     )
                     .filter(
-                        Boolean
+                        (url: string) => url !== ""
                     )
             )
         ];
@@ -1420,7 +1684,7 @@ class Provider {
         );
 
         const videoSources =
-            await this.HandleServerUrl(
+            await this.HandleAnsEmbedUrl(
                 serverUrl
             );
 
@@ -1441,7 +1705,8 @@ class Provider {
 
         const referer =
             new URL(serverUrl)
-                .origin;
+                .origin +
+            "/";
 
         return {
             headers: {
