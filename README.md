@@ -18,6 +18,19 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/manif
 - `provider.js` — Provider fonctionnel (⚠️ à récupérer)
 - `provider-reference.js` — Référence logique corrigée (épisodes par index)
 
+### 🎬 Anime-Sama | AnsEmbed (Streaming Provider)
+
+Provider Anime-Sama indépendant dédié uniquement au lecteur AnsEmbed.
+
+**Installation :** Seanime → Extensions → Add extensions → coller l'URL :
+```
+https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama-ansembed/manifest.json
+```
+
+**Fichiers :**
+- `manifest.json` — Métadonnées extension
+- `payload.ts` — Provider TypeScript dédié AnsEmbed
+
 ### 📺 Chrome Cast (Plugin)
 
 Plugin expérimental pour activer la lecture distante / Cast natif dans Seanime Web.

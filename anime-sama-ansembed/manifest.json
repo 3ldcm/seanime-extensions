@@ -1,0 +1,12 @@
+{
+    "id": "anime-sama-ansembed-online-streaming",
+    "name": "Anime-Sama | AnsEmbed",
+    "version": "1.0.0",
+    "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama-ansembed/manifest.json",
+    "language": "typescript",
+    "type": "onlinestream-provider",
+    "description": "Anime-Sama provider dédié au lecteur AnsEmbed",
+    "author": "Bastien",
+    "lang": "fr",
+    "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama-ansembed/payload.ts"
+}
