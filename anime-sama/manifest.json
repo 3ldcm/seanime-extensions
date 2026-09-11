@@ -1,7 +1,7 @@
 {
     "id": "anime-sama-v2-online-streaming",
     "name": "FR | Anime Sama V2",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama/manifest.json",
     "language": "typescript",
     "type": "onlinestream-provider",
