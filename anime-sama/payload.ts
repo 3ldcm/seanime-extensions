@@ -1373,314 +1373,73 @@ class Provider {
 
         this._Server = _server;
 
-        /*
-         * ------------------------------------------------------
-         * Liste des URLs disponibles pour cet épisode
-         * ------------------------------------------------------
-         *
-         * Anime-Sama peut mettre un autre lecteur dans une
-         * colonne censée être "Sibnet".
-         *
-         * Exemple épisode 8 :
-         * colonne Sibnet -> URL AnsEmbed
-         *
-         * On ne fait donc plus confiance à la position du
-         * lecteur. On regarde réellement le domaine de l'URL.
-         */
-
-        const servers = [
-            ...new Set(
-                episode.id
-                    .split(",")
-                    .map(url => url.trim())
-                    .filter(url => url !== "")
-            )
-        ];
-
-        console.log(
-            `[SERVER] Requested: ${_server}`
-        );
-
-        console.log(
-            `[SERVER] Available URLs:`,
-            servers
-        );
-
+        const servers =
+            episode.id.split(",");
 
         /*
          * ------------------------------------------------------
-         * Détection du vrai lecteur à partir de l'URL
+         * 1. Chercher le serveur demandé normalement
          * ------------------------------------------------------
          */
 
-        const getServerName = (
-            serverUrl: string
-        ): string => {
+        let serverUrl = "";
 
-            try {
-
-                const hostname =
-                    new URL(serverUrl)
-                        .hostname
-                        .toLowerCase();
-
-                if (
-                    hostname.includes(
-                        "sibnet"
-                    )
-                ) {
-                    return "sibnet";
-                }
-
-                if (
-                    hostname.includes(
-                        "ansembed"
-                    )
-                ) {
-                    return "ansembed";
-                }
-
-                if (
-                    hostname.includes(
-                        "embed4me"
-                    )
-                ) {
-                    return "embed4me";
-                }
-
-                if (
-                    hostname.includes(
-                        "vidmoly"
-                    )
-                ) {
-                    return "vidmoly";
-                }
-
-                if (
-                    hostname.includes(
-                        "uqload"
-                    )
-                ) {
-                    return "uqload";
-                }
-
-                if (
-                    hostname.includes(
-                        "minochinos"
-                    )
-                ) {
-                    return "minochinos";
-                }
-
-                if (
-                    hostname.includes(
-                        "sendvid"
-                    )
-                ) {
-                    return "sendvid";
-                }
-
-                if (
-                    hostname.includes(
-                        "oneupload"
-                    )
-                ) {
-                    return "oneupload";
-                }
-
-                if (
-                    hostname.includes(
-                        "movearnpre"
-                    )
-                ) {
-                    return "movearnpre";
-                }
-
-                /*
-                 * VK peut utiliser plusieurs sous-domaines.
-                 */
-
-                if (
-                    hostname === "vk.com" ||
-                    hostname.endsWith(
-                        ".vk.com"
-                    ) ||
-                    hostname.includes(
-                        "vkvideo"
-                    )
-                ) {
-                    return "vk";
-                }
-
-
-                /*
-                 * Serveur inconnu :
-                 * on retourne simplement le hostname.
-                 */
-
-                return hostname;
-
-            } catch (
-                error
-            ) {
-
-                console.log(
-                    `[SERVER] Invalid URL: ${serverUrl}`
-                );
-
-                return "";
-            }
-        };
-
-
-        /*
-         * ------------------------------------------------------
-         * Cherche d'abord exactement le serveur demandé
-         * ------------------------------------------------------
-         */
-
-        const requestedUrl =
-            servers.find(
-                url =>
-                    getServerName(url) ===
-                    _server
-            );
-
-
-        /*
-         * ------------------------------------------------------
-         * Ordre de fallback
-         * ------------------------------------------------------
-         *
-         * Le serveur demandé reste TOUJOURS prioritaire.
-         *
-         * Ensuite :
-         *
-         * Sibnet
-         * AnsEmbed
-         * Vidmoly
-         * Embed4me
-         * Uqload
-         * Mino
-         * autres
-         *
-         * On ne modifie pas SUPPORTED_SERVERS :
-         * Uqload/Mino peuvent servir de fallback sans apparaître
-         * comme lecteurs supplémentaires dans Seanime.
-         */
-
-        const fallbackPriority = [
-            "sibnet",
-            "ansembed",
-            "vidmoly",
-            "embed4me",
-            "uqload",
-            "minochinos",
-            "sendvid",
-            "vk",
-            "movearnpre",
-            "oneupload"
-        ];
-
-
-        const fallbackUrls =
-            servers
-                .filter(
-                    url =>
-                        url !== requestedUrl
-                )
-                .sort(
-                    (
-                        a,
-                        b
-                    ) => {
-
-                        const serverA =
-                            getServerName(a);
-
-                        const serverB =
-                            getServerName(b);
-
-                        const indexA =
-                            fallbackPriority.indexOf(
-                                serverA
-                            );
-
-                        const indexB =
-                            fallbackPriority.indexOf(
-                                serverB
-                            );
-
-                        const priorityA =
-                            indexA === -1
-                                ? 999
-                                : indexA;
-
-                        const priorityB =
-                            indexB === -1
-                                ? 999
-                                : indexB;
-
-                        return (
-                            priorityA -
-                            priorityB
-                        );
-                    }
-                );
-
-
-        /*
-         * ------------------------------------------------------
-         * Liste finale des lecteurs à essayer
-         * ------------------------------------------------------
-         */
-
-        const candidates =
-            requestedUrl
-                ? [
-                    requestedUrl,
-                    ...fallbackUrls
-                ]
-                : fallbackUrls;
-
-
-        if (
-            requestedUrl
+        for (
+            let i = 0;
+            i < servers.length;
+            i++
         ) {
 
-            console.log(
-                `[SERVER] Requested server found: ${_server}`
-            );
+            const server =
+                servers[i];
 
-        } else {
+            const parts =
+                server.split("/");
 
-            console.log(
-                `[SERVER] ${_server} not available, trying fallback servers`
-            );
+            const domain =
+                parts[2];
+
+            if (
+                !domain
+            ) {
+                continue;
+            }
+
+            const domainParts =
+                domain.split(".");
+
+            const serverName =
+                domainParts.length >= 3
+                    ? domainParts[1]
+                    : domainParts[0];
+
+            if (
+                serverName ===
+                _server
+            ) {
+
+                serverUrl =
+                    server;
+
+                break;
+            }
         }
 
 
         /*
          * ------------------------------------------------------
-         * Test des lecteurs
+         * 2. Essayer le serveur demandé
          * ------------------------------------------------------
          */
 
-        for (
-            const serverUrl
-            of candidates
+        if (
+            serverUrl !== "" &&
+            _server !== ""
         ) {
 
-            const actualServer =
-                getServerName(
-                    serverUrl
-                );
-
-
             console.log(
-                `[SERVER] Trying ${actualServer}: ${serverUrl}`
+                `Handling server URL: ${serverUrl}`
             );
-
 
             try {
 
@@ -1689,11 +1448,144 @@ class Provider {
                         serverUrl
                     );
 
+                if (
+                    videoSources.length >
+                    0
+                ) {
 
-                /*
-                 * Pas de MP4/M3U8 trouvé :
-                 * on passe automatiquement au suivant.
-                 */
+                    const referer =
+                        serverUrl
+                            .split("/")
+                            .slice(
+                                0,
+                                3
+                            )
+                            .join("/");
+
+                    return {
+                        headers: {
+                            referer:
+                                referer
+                        },
+
+                        server:
+                            _server,
+
+                        videoSources:
+                            videoSources
+                    };
+                }
+
+                console.log(
+                    `Server failed: ${_server}, trying fallback`
+                );
+
+            } catch (
+                error
+            ) {
+
+                console.log(
+                    `Server error: ${_server}, trying fallback`
+                );
+            }
+
+        } else {
+
+            console.log(
+                `Server not found: ${_server}, trying fallback`
+            );
+        }
+
+
+        /*
+         * ------------------------------------------------------
+         * 3. FALLBACK
+         * ------------------------------------------------------
+         *
+         * On teste simplement les autres URLs de l'épisode.
+         *
+         * Très important :
+         * on ne modifie pas la liste SUPPORTED_SERVERS.
+         */
+
+        for (
+            let i = 0;
+            i < servers.length;
+            i++
+        ) {
+
+            const fallbackUrl =
+                servers[i];
+
+            /*
+             * Ne pas retester le serveur déjà essayé.
+             */
+
+            if (
+                fallbackUrl ===
+                serverUrl
+            ) {
+                continue;
+            }
+
+            /*
+             * URL invalide
+             */
+
+            if (
+                fallbackUrl.indexOf(
+                    "http"
+                ) !== 0
+            ) {
+                continue;
+            }
+
+
+            /*
+             * --------------------------------------------------
+             * Éviter de tester deux fois exactement la même URL
+             * --------------------------------------------------
+             */
+
+            let alreadyTested =
+                false;
+
+            for (
+                let j = 0;
+                j < i;
+                j++
+            ) {
+
+                if (
+                    servers[j] ===
+                    fallbackUrl
+                ) {
+
+                    alreadyTested =
+                        true;
+
+                    break;
+                }
+            }
+
+            if (
+                alreadyTested
+            ) {
+                continue;
+            }
+
+
+            console.log(
+                `Trying fallback URL: ${fallbackUrl}`
+            );
+
+
+            try {
+
+                const videoSources =
+                    await this.HandleServerUrl(
+                        fallbackUrl
+                    );
 
                 if (
                     videoSources.length ===
@@ -1701,7 +1593,7 @@ class Provider {
                 ) {
 
                     console.log(
-                        `[SERVER] ${actualServer} returned no video source`
+                        `Fallback returned no source`
                     );
 
                     continue;
@@ -1710,53 +1602,119 @@ class Provider {
 
                 /*
                  * --------------------------------------------------
-                 * Succès
+                 * Déterminer le nom réel du serveur
                  * --------------------------------------------------
                  */
 
-                let referer = "";
+                let fallbackServer =
+                    "fallback";
 
-                try {
+                const parts =
+                    fallbackUrl.split("/");
 
-                    referer =
-                        new URL(
-                            serverUrl
-                        ).origin;
-
-                } catch (
-                    error
-                ) {
-
-                    referer =
-                        serverUrl
-                            .split("/")
-                            .slice(
-                                0,
-                                3
-                            )
-                            .join("/");
-                }
-
+                const domain =
+                    parts[2];
 
                 if (
-                    actualServer ===
-                    _server
+                    domain
                 ) {
 
-                    console.log(
-                        `[SERVER] Success: ${actualServer}`
-                    );
+                    if (
+                        domain.indexOf(
+                            "sibnet"
+                        ) !== -1
+                    ) {
 
-                } else {
+                        fallbackServer =
+                            "sibnet";
 
-                    console.log(
-                        `[SERVER] Fallback success: ${_server} -> ${actualServer}`
-                    );
+                    } else if (
+                        domain.indexOf(
+                            "ansembed"
+                        ) !== -1
+                    ) {
+
+                        fallbackServer =
+                            "ansembed";
+
+                    } else if (
+                        domain.indexOf(
+                            "embed4me"
+                        ) !== -1
+                    ) {
+
+                        fallbackServer =
+                            "embed4me";
+
+                    } else if (
+                        domain.indexOf(
+                            "vidmoly"
+                        ) !== -1
+                    ) {
+
+                        fallbackServer =
+                            "vidmoly";
+
+                    } else if (
+                        domain.indexOf(
+                            "uqload"
+                        ) !== -1
+                    ) {
+
+                        fallbackServer =
+                            "uqload";
+
+                    } else if (
+                        domain.indexOf(
+                            "minochinos"
+                        ) !== -1
+                    ) {
+
+                        fallbackServer =
+                            "minochinos";
+
+                    } else if (
+                        domain.indexOf(
+                            "sendvid"
+                        ) !== -1
+                    ) {
+
+                        fallbackServer =
+                            "sendvid";
+
+                    } else if (
+                        domain.indexOf(
+                            "oneupload"
+                        ) !== -1
+                    ) {
+
+                        fallbackServer =
+                            "oneupload";
+
+                    } else if (
+                        domain.indexOf(
+                            "movearnpre"
+                        ) !== -1
+                    ) {
+
+                        fallbackServer =
+                            "movearnpre";
+                    }
                 }
+
+
+                const referer =
+                    fallbackUrl
+                        .split("/")
+                        .slice(
+                            0,
+                            3
+                        )
+                        .join("/");
 
 
                 console.log(
-                    `[SERVER] Video sources found: ${videoSources.length}`
+                    `Fallback success: ${fallbackServer}`
                 );
 
 
@@ -1767,14 +1725,18 @@ class Provider {
                     },
 
                     /*
-                     * Important :
+                     * Je garde volontairement _server ici.
                      *
-                     * on indique le VRAI lecteur utilisé,
-                     * pas celui demandé initialement.
+                     * Seanime a demandé "sibnet".
+                     * On lui renvoie donc le résultat dans
+                     * le slot sibnet, même si la vidéo vient
+                     * finalement d'AnsEmbed.
+                     *
+                     * C'est beaucoup moins risqué.
                      */
 
                     server:
-                        actualServer,
+                        _server,
 
                     videoSources:
                         videoSources
@@ -1785,14 +1747,8 @@ class Provider {
                 error
             ) {
 
-                /*
-                 * Un lecteur cassé ne doit jamais empêcher
-                 * d'essayer les suivants.
-                 */
-
-                console.error(
-                    `[SERVER] Failed ${actualServer}:`,
-                    error
+                console.log(
+                    `Fallback failed`
                 );
             }
         }
@@ -1800,14 +1756,13 @@ class Provider {
 
         /*
          * ------------------------------------------------------
-         * Aucun lecteur exploitable
+         * Aucun lecteur n'a fonctionné
          * ------------------------------------------------------
          */
 
         console.log(
-            `[SERVER] No working server found for requested server: ${_server}`
+            `No working server found: ${_server}`
         );
-
 
         return <EpisodeServer>{
             headers: {},
