@@ -1,11 +1,11 @@
 {
     "id": "anime-sama-v2-online-streaming",
     "name": "FR | Anime Sama V2",
-    "version": "2.1.4",
+    "version": "2.1.5",
     "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama/manifest.json",
     "language": "typescript",
     "type": "onlinestream-provider",
-    "description": "Anime Sama V2 — fix sélection Sibnet/VK et URLs échappées",
+    "description": "Anime Sama V2 — privilégie Sibnet, filtre HLS VK cassé",
     "author": "Bastien",
     "lang": "fr",
     "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama/payload.ts"

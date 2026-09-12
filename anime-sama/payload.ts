@@ -1057,6 +1057,17 @@ class Provider {
                     ? "m3u8"
                     : "mp4";
 
+            if (
+                this._Server === "vk" &&
+                type === "m3u8"
+            ) {
+                console.log(
+                    "[VK] Skipping HLS manifest because Seanime proxy returns 400 for VK/OKCDN manifests"
+                );
+
+                continue;
+            }
+
             videos.push({
                 url:
                     finalUrl,
