@@ -76,6 +76,9 @@ class Provider {
     private static readonly VIDEO_URL_RE =
         /(?:https?:\/\/|\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
 
+    private static readonly ESCAPED_VIDEO_URL_RE =
+        /(?:https?:\\\/\\\/|\\\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
+
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
 
@@ -118,6 +121,82 @@ class Provider {
             .replace(/[^a-z0-9]+/g, " ")
             .trim()
             .replace(/\s+/g, " ");
+    }
+
+    private getServerName(
+        serverUrl: string
+    ): string {
+        try {
+            const hostname =
+                new URL(serverUrl)
+                    .hostname
+                    .toLowerCase();
+
+            if (
+                hostname === "video.sibnet.ru" ||
+                hostname === "sibnet.ru" ||
+                hostname.endsWith(".sibnet.ru")
+            ) {
+                return "sibnet";
+            }
+
+            if (
+                hostname === "vk.com" ||
+                hostname.endsWith(".vk.com") ||
+                hostname.includes("vkvideo")
+            ) {
+                return "vk";
+            }
+
+            if (
+                hostname === "sendvid.com" ||
+                hostname.endsWith(".sendvid.com")
+            ) {
+                return "sendvid";
+            }
+
+            if (
+                hostname === "vidmoly.to" ||
+                hostname.endsWith(".vidmoly.to")
+            ) {
+                return "vidmoly";
+            }
+
+            if (
+                hostname.includes("movearnpre")
+            ) {
+                return "movearnpre";
+            }
+
+            if (
+                hostname === "oneupload.to" ||
+                hostname.endsWith(".oneupload.to")
+            ) {
+                return "oneupload";
+            }
+
+            if (
+                hostname === "embed4me.net" ||
+                hostname.endsWith(".embed4me.net")
+            ) {
+                return "embed4me";
+            }
+
+            if (
+                hostname === "ansembed.net" ||
+                hostname.endsWith(".ansembed.net")
+            ) {
+                return "ansembed";
+            }
+
+            return hostname
+                .split(".")
+                .filter(Boolean)
+                .slice(-2, -1)[0] || hostname;
+
+        } catch (error) {
+            return "";
+        }
     }
 
     private getSlugFromUrl(
@@ -902,10 +981,29 @@ class Provider {
                 ? `${html}\n${unpacked}`
                 : html;
 
-        const videoUrls =
-            searchSource.match(
-                Provider.VIDEO_URL_RE
-            ) || [];
+        const unescapedSearchSource =
+            searchSource
+                .replace(/\\\//g, "/")
+                .replace(/\\u0026/g, "&");
+
+        const videoUrls = [
+            ...new Set<string>([
+                ...(
+                    searchSource.match(
+                        Provider.ESCAPED_VIDEO_URL_RE
+                    ) || []
+                ).map(
+                    url => url
+                        .replace(/\\\//g, "/")
+                        .replace(/\\u0026/g, "&")
+                ),
+                ...(
+                    unescapedSearchSource.match(
+                        Provider.VIDEO_URL_RE
+                    ) || []
+                )
+            ])
+        ];
 
         const videos:
             VideoSource[] = [];
@@ -1374,56 +1472,115 @@ class Provider {
         this._Server =
             _server;
 
-        const servers =
-            episode.id.split(",");
+        const servers: string[] = [
+            ...new Set<string>(
+                episode.id
+                    .split(",")
+                    .map(
+                        (url: string) => url.trim()
+                    )
+                    .filter(
+                        (url: string) => url !== ""
+                    )
+            )
+        ];
 
-        const serverUrl =
-            servers.find(
-                server => {
+        const requestedServer =
+            (_server || "")
+                .toLowerCase();
 
-                    const parts =
-                        server.split("/");
+        const fallbackPriority = [
+            "sibnet",
+            "vk",
+            "sendvid",
+            "vidmoly",
+            "movearnpre",
+            "oneupload",
+            "embed4me",
+            "ansembed"
+        ];
 
-                    const domain =
-                        parts[2];
+        const candidates =
+            servers
+                .map(
+                    url => ({
+                        url,
+                        server:
+                            this.getServerName(
+                                url
+                            )
+                    })
+                )
+                .filter(
+                    candidate =>
+                        candidate.server !== ""
+                );
 
-                    if (!domain) {
-                        return false;
-                    }
+        const orderedCandidates =
+            candidates
+                .filter(
+                    candidate =>
+                        candidate.server ===
+                        requestedServer
+                )
+                .concat(
+                    candidates
+                        .filter(
+                            candidate =>
+                                candidate.server !==
+                                requestedServer
+                        )
+                        .sort(
+                            (a, b) =>
+                                (
+                                    fallbackPriority.indexOf(
+                                        a.server
+                                    ) === -1
+                                        ? fallbackPriority.length
+                                        : fallbackPriority.indexOf(
+                                            a.server
+                                        )
+                                ) -
+                                (
+                                    fallbackPriority.indexOf(
+                                        b.server
+                                    ) === -1
+                                        ? fallbackPriority.length
+                                        : fallbackPriority.indexOf(
+                                            b.server
+                                        )
+                                )
+                        )
+                );
 
-                    const domainParts =
-                        domain.split(".");
-
-                    const serverName =
-                        domainParts.length >= 3
-                            ? domainParts[1]
-                            : domainParts[0];
-
-                    return (
-                        serverName ===
-                        _server
-                    );
-                }
-            );
-
-        if (
-            serverUrl &&
-            _server !== ""
+        for (
+            const candidate of orderedCandidates
         ) {
+            if (
+                requestedServer !== "" &&
+                candidate.server !== requestedServer &&
+                _server !== "sibnet"
+            ) {
+                continue;
+            }
+
+            this._Server =
+                candidate.server;
+
             console.log(
-                `Handling server URL: ${serverUrl}`
+                `[SERVER] Handling ${candidate.server}: ${candidate.url}`
             );
 
             const videoSources =
                 await this.HandleServerUrl(
-                    serverUrl
+                    candidate.url
                 );
 
             if (
                 videoSources.length > 0
             ) {
                 const referer =
-                    serverUrl
+                    candidate.url
                         .split("/")
                         .slice(
                             0,
@@ -1437,11 +1594,15 @@ class Provider {
                             referer
                     },
                     server:
-                        _server,
+                        candidate.server,
                     videoSources:
                         videoSources
                 };
             }
+
+            console.log(
+                `[SERVER] ${candidate.server} returned no video source`
+            );
         }
 
         console.log(
