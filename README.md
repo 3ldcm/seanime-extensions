@@ -31,6 +31,19 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama-ansem
 - `manifest.json` — Métadonnées extension
 - `payload.ts` — Provider TypeScript dédié AnsEmbed
 
+### 🎬 VoirAnime (Streaming Provider)
+
+Provider VoirAnime pour Seanime.
+
+**Installation :** Seanime → Extensions → Add extensions → coller l'URL :
+```
+https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/voir-anime/manifest.json
+```
+
+**Fichiers :**
+- `manifest.json` — Métadonnées extension
+- `payload.ts` — Provider TypeScript
+
 ### 📺 Chrome Cast (Plugin)
 
 Plugin expérimental pour activer la lecture distante / Cast natif dans Seanime Web.
