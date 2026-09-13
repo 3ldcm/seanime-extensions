@@ -73,7 +73,7 @@ class Provider {
         /(?:https?:\\\/\\\/|\\\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
 
     private static readonly ANSEMBED_FILE_RE =
-        /file\s*:\s*["']?([^"',\s]+\.m3u8[^"',\s]*)["']?/i;
+        /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i;
 
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
@@ -1160,44 +1160,80 @@ class Provider {
                 .replace(/\\u0026/g, "&")
                 .replace(/&amp;/g, "&");
 
+        const videoUrls: string[] = [];
+        const seenVideoUrls:
+            Record<string, boolean> = {};
+
+        const addVideoUrl =
+            (
+                rawUrl: string
+            ) => {
+
+                const cleanedUrl =
+                    rawUrl
+                        .replace(/\\\//g, "/")
+                        .replace(/\\u0026/g, "&")
+                        .replace(/&amp;/g, "&");
+
+                const lowerUrl =
+                    cleanedUrl.toLowerCase();
+
+                if (
+                    !lowerUrl.includes(".m3u8") ||
+                    lowerUrl.includes("bigbuckbunny") ||
+                    lowerUrl.includes("sample") ||
+                    seenVideoUrls[cleanedUrl]
+                ) {
+                    return;
+                }
+
+                seenVideoUrls[cleanedUrl] =
+                    true;
+
+                videoUrls.push(
+                    cleanedUrl
+                );
+            };
+
         const fileMatch =
             unescapedSearchSource.match(
                 Provider.ANSEMBED_FILE_RE
             );
 
-        const videoUrls = [
-            ...new Set<string>([
-                ...(fileMatch
-                    ? [fileMatch[1]]
-                    : []),
-                ...(
-                    searchSource.match(
-                        Provider.ESCAPED_VIDEO_URL_RE
-                    ) || []
-                ).map(
-                    url => url
-                        .replace(/\\\//g, "/")
-                        .replace(/\\u0026/g, "&")
-                        .replace(/&amp;/g, "&")
-                ),
-                ...(
-                    unescapedSearchSource.match(
-                        Provider.VIDEO_URL_RE
-                    ) || []
-                )
-            ])
-        ].filter(
-            url => {
-                const lowerUrl =
-                    url.toLowerCase();
+        if (
+            fileMatch &&
+            fileMatch[1]
+        ) {
+            addVideoUrl(
+                fileMatch[1]
+            );
+        }
 
-                return (
-                    lowerUrl.includes(".m3u8") &&
-                    !lowerUrl.includes("bigbuckbunny") &&
-                    !lowerUrl.includes("sample")
-                );
-            }
-        );
+        const escapedMatches =
+            searchSource.match(
+                Provider.ESCAPED_VIDEO_URL_RE
+            ) || [];
+
+        for (
+            const escapedUrl of escapedMatches
+        ) {
+            addVideoUrl(
+                escapedUrl
+            );
+        }
+
+        const plainMatches =
+            unescapedSearchSource.match(
+                Provider.VIDEO_URL_RE
+            ) || [];
+
+        for (
+            const plainUrl of plainMatches
+        ) {
+            addVideoUrl(
+                plainUrl
+            );
+        }
 
         console.log(
             `[ANSEMBED] HLS candidates: ${videoUrls.length}`
