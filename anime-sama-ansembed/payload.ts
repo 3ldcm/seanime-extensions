@@ -69,14 +69,14 @@ class Provider {
     private static readonly VIDEO_URL_RE =
         /(?:https?:\/\/|\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
 
-    private static readonly VIDMOLY_FILE_RE =
-        /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i;
+    private static readonly ESCAPED_VIDEO_URL_RE =
+        /(?:https?:\\\/\\\/|\\\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
+
+    private static readonly ANSEMBED_FILE_RE =
+        /file\s*:\s*["']?([^"',\s]+\.m3u8[^"',\s]*)["']?/i;
 
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
-
-    private readonly SEANIME_API =
-        "/api/v1/proxy?url=";
 
     _Server = "";
 
@@ -87,6 +87,11 @@ class Provider {
         };
     }
 
+    /*
+     * IMPORTANT
+     * On ne repasse plus par /api/v1/proxy.
+     * Ça évite le 401 UNAUTHENTICATED sur le LXC.
+     */
     private proxyFetch(
         targetUrl: string,
         headers?: Record<string, string>
@@ -95,15 +100,12 @@ class Provider {
             return fetch(targetUrl);
         }
 
-        let url =
-            `${this.SEANIME_API}${encodeURIComponent(targetUrl)}`;
-
-        url +=
-            `&headers=${encodeURIComponent(
-                JSON.stringify(headers)
-            )}`;
-
-        return fetch(url);
+        return fetch(
+            targetUrl,
+            {
+                headers
+            }
+        );
     }
 
     private stripComments(
@@ -909,10 +911,29 @@ class Provider {
                 ? `${html}\n${unpacked}`
                 : html;
 
-        const videoUrls =
-            searchSource.match(
-                Provider.VIDEO_URL_RE
-            ) || [];
+        const unescapedSearchSource =
+            searchSource
+                .replace(/\\\//g, "/")
+                .replace(/\\u0026/g, "&");
+
+        const videoUrls = [
+            ...new Set<string>([
+                ...(
+                    searchSource.match(
+                        Provider.ESCAPED_VIDEO_URL_RE
+                    ) || []
+                ).map(
+                    url => url
+                        .replace(/\\\//g, "/")
+                        .replace(/\\u0026/g, "&")
+                ),
+                ...(
+                    unescapedSearchSource.match(
+                        Provider.VIDEO_URL_RE
+                    ) || []
+                )
+            ])
+        ];
 
         const videos:
             VideoSource[] = [];
@@ -985,13 +1006,19 @@ class Provider {
         serverUrl: string
     ): Promise<VideoSource[]> {
 
+        if (
+            this.isEmbed4meUrl(
+                serverUrl
+            )
+        ) {
+            return this.HandleEmbed4meUrl(
+                serverUrl
+            );
+        }
+
         const req =
             await this.proxyFetch(
-                serverUrl,
-                {
-                    referer:
-                        "https://anime-sama.to/"
-                }
+                serverUrl
             );
 
         if (!req.ok) {
@@ -1127,57 +1154,50 @@ class Provider {
                 "\n" + unpacked;
         }
 
+        const unescapedSearchSource =
+            searchSource
+                .replace(/\\\//g, "/")
+                .replace(/\\u0026/g, "&")
+                .replace(/&amp;/g, "&");
+
         const fileMatch =
-            searchSource.match(
-                Provider.VIDMOLY_FILE_RE
+            unescapedSearchSource.match(
+                Provider.ANSEMBED_FILE_RE
             );
 
-        if (fileMatch) {
-            let videoUrl =
-                fileMatch[1];
+        const videoUrls = [
+            ...new Set<string>([
+                ...(fileMatch
+                    ? [fileMatch[1]]
+                    : []),
+                ...(
+                    searchSource.match(
+                        Provider.ESCAPED_VIDEO_URL_RE
+                    ) || []
+                ).map(
+                    url => url
+                        .replace(/\\\//g, "/")
+                        .replace(/\\u0026/g, "&")
+                        .replace(/&amp;/g, "&")
+                ),
+                ...(
+                    unescapedSearchSource.match(
+                        Provider.VIDEO_URL_RE
+                    ) || []
+                )
+            ])
+        ].filter(
+            url => {
+                const lowerUrl =
+                    url.toLowerCase();
 
-            videoUrl =
-                videoUrl
-                    .replace(/\\\//g, "/")
-                    .replace(/&amp;/g, "&");
-
-            if (
-                videoUrl.startsWith("/") &&
-                !videoUrl.startsWith("//")
-            ) {
-                videoUrl =
-                    new URL(serverUrl).origin +
-                    videoUrl;
-
-            } else if (
-                videoUrl.startsWith("//")
-            ) {
-                videoUrl =
-                    `https:${videoUrl}`;
+                return (
+                    lowerUrl.includes(".m3u8") &&
+                    !lowerUrl.includes("bigbuckbunny") &&
+                    !lowerUrl.includes("sample")
+                );
             }
-
-            console.log(
-                "[ANSEMBED] HLS source found"
-            );
-
-            return [
-                {
-                    url:
-                        videoUrl,
-                    type:
-                        "m3u8" as VideoSourceType,
-                    quality:
-                        "ansembed - auto",
-                    subtitles:
-                        []
-                }
-            ];
-        }
-
-        const videoUrls =
-            searchSource.match(
-                Provider.VIDEO_URL_RE
-            ) || [];
+        );
 
         const videos:
             VideoSource[] = [];
@@ -1192,6 +1212,7 @@ class Provider {
             let finalUrl =
                 url
                     .replace(/\\\//g, "/")
+                    .replace(/\\u0026/g, "&")
                     .replace(/&amp;/g, "&");
 
             if (
@@ -1209,26 +1230,352 @@ class Provider {
                     `https:${finalUrl}`;
             }
 
-            const type =
-                finalUrl.includes(
-                    ".m3u8"
-                )
-                    ? "m3u8"
-                    : "mp4";
+            const bestVariant =
+                await this.resolveBestM3u8Variant(
+                    finalUrl
+                );
 
             videos.push({
                 url:
-                    finalUrl,
+                    bestVariant,
                 type:
-                    type as VideoSourceType,
+                    "m3u8" as VideoSourceType,
                 quality:
-                    "ansembed - unknown",
+                    "ansembed - auto",
                 subtitles:
                     []
             });
         }
 
         return videos;
+    }
+
+    private async resolveBestM3u8Variant(
+        playlistUrl: string
+    ): Promise<string> {
+
+        try {
+            const response =
+                await this.proxyFetch(
+                    playlistUrl
+                );
+
+            if (!response.ok) {
+                return playlistUrl;
+            }
+
+            const playlist =
+                await response.text();
+
+            const lines =
+                playlist
+                    .split(/\r?\n/)
+                    .map(
+                        line => line.trim()
+                    );
+
+            let pendingBandwidth = -1;
+            let bestBandwidth = -1;
+            let bestUrl = "";
+
+            for (
+                const line of lines
+            ) {
+                if (
+                    line.startsWith(
+                        "#EXT-X-STREAM-INF"
+                    )
+                ) {
+                    const bandwidthMatch =
+                        line.match(
+                            /BANDWIDTH=(\d+)/i
+                        );
+
+                    pendingBandwidth =
+                        bandwidthMatch
+                            ? parseInt(
+                                bandwidthMatch[1],
+                                10
+                            )
+                            : 0;
+
+                    continue;
+                }
+
+                if (
+                    pendingBandwidth >= 0 &&
+                    line !== "" &&
+                    !line.startsWith("#")
+                ) {
+                    if (
+                        pendingBandwidth >
+                        bestBandwidth
+                    ) {
+                        bestBandwidth =
+                            pendingBandwidth;
+
+                        bestUrl =
+                            new URL(
+                                line,
+                                playlistUrl
+                            ).toString();
+                    }
+
+                    pendingBandwidth =
+                        -1;
+                }
+            }
+
+            return bestUrl || playlistUrl;
+
+        } catch (error) {
+            console.log(
+                "[ANSEMBED] Failed to parse master playlist:",
+                error
+            );
+
+            return playlistUrl;
+        }
+    }
+
+    private isEmbed4meUrl(
+        serverUrl: string
+    ): boolean {
+        try {
+            const hostname =
+                new URL(serverUrl)
+                    .hostname
+                    .toLowerCase();
+
+            return (
+                hostname === "lpayer.embed4me.com" ||
+                hostname.endsWith(".embed4me.com") ||
+                hostname === "embed4me.net" ||
+                hostname.endsWith(".embed4me.net")
+            );
+
+        } catch (error) {
+            return false;
+        }
+    }
+
+    private getEmbed4meVideoId(
+        serverUrl: string
+    ): string {
+        const hashMatch =
+            serverUrl.match(
+                /#([a-zA-Z0-9]+)/
+            );
+
+        if (hashMatch) {
+            return hashMatch[1];
+        }
+
+        try {
+            return new URL(serverUrl)
+                .searchParams
+                .get("id") || "";
+
+        } catch (error) {
+            return "";
+        }
+    }
+
+    private hexToBytes(
+        hex: string
+    ): Uint8Array {
+        const bytes =
+            new Uint8Array(
+                Math.floor(
+                    hex.length / 2
+                )
+            );
+
+        for (
+            let index = 0;
+            index < bytes.length;
+            index++
+        ) {
+            bytes[index] =
+                parseInt(
+                    hex.slice(
+                        index * 2,
+                        index * 2 + 2
+                    ),
+                    16
+                );
+        }
+
+        return bytes;
+    }
+
+    private async decryptEmbed4mePayload(
+        hexData: string
+    ): Promise<string> {
+        const encoder =
+            new TextEncoder();
+
+        const key =
+            await crypto.subtle.importKey(
+                "raw",
+                encoder.encode(
+                    "kiemtienmua911ca"
+                ),
+                {
+                    name:
+                        "AES-CBC"
+                },
+                false,
+                [
+                    "decrypt"
+                ]
+            );
+
+        const encryptedData =
+            this.hexToBytes(
+                hexData
+            );
+
+        const encryptedBuffer =
+            encryptedData.buffer.slice(
+                encryptedData.byteOffset,
+                encryptedData.byteOffset +
+                encryptedData.byteLength
+            ) as ArrayBuffer;
+
+        const decrypted =
+            await crypto.subtle.decrypt(
+                {
+                    name:
+                        "AES-CBC",
+                    iv:
+                        encoder.encode(
+                            "1234567890oiuytr"
+                        )
+                },
+                key,
+                encryptedBuffer
+            );
+
+        return new TextDecoder()
+            .decode(
+                decrypted
+            );
+    }
+
+    private async HandleEmbed4meUrl(
+        serverUrl: string
+    ): Promise<VideoSource[]> {
+        const videoId =
+            this.getEmbed4meVideoId(
+                serverUrl
+            );
+
+        if (
+            videoId === ""
+        ) {
+            console.log(
+                "[ANSEMBED] embed4me video id not found"
+            );
+
+            return [];
+        }
+
+        const apiUrl =
+            `https://lpayer.embed4me.com/api/v1/video?id=${videoId}&w=1920&h=1080&r=https://lpayer.embed4me.com/`;
+
+        try {
+            const response =
+                await this.proxyFetch(
+                    apiUrl,
+                    {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer":
+                            "https://lpayer.embed4me.com/"
+                    }
+                );
+
+            if (!response.ok) {
+                console.log(
+                    `[ANSEMBED] embed4me API HTTP ${response.status}`
+                );
+
+                return [];
+            }
+
+            const rawPayload =
+                (
+                    await response.text()
+                )
+                    .trim()
+                    .replace(/^"|"$/g, "");
+
+            if (
+                !/^[0-9a-f]+$/i.test(
+                    rawPayload
+                )
+            ) {
+                console.log(
+                    "[ANSEMBED] embed4me API returned non-hex payload"
+                );
+
+                return [];
+            }
+
+            const decryptedPayload =
+                await this.decryptEmbed4mePayload(
+                    rawPayload
+                );
+
+            const data =
+                JSON.parse(
+                    decryptedPayload
+                );
+
+            const source =
+                data.cfNative ||
+                data.cf ||
+                data.source ||
+                "";
+
+            if (
+                typeof source !== "string" ||
+                source === ""
+            ) {
+                console.log(
+                    "[ANSEMBED] embed4me source missing"
+                );
+
+                return [];
+            }
+
+            const bestVariant =
+                await this.resolveBestM3u8Variant(
+                    source
+                );
+
+            return [
+                {
+                    url:
+                        bestVariant,
+                    type:
+                        "m3u8" as VideoSourceType,
+                    quality:
+                        "embed4me - auto",
+                    subtitles:
+                        []
+                }
+            ];
+
+        } catch (error) {
+            console.log(
+                "[ANSEMBED] embed4me extraction failed:",
+                error
+            );
+
+            return [];
+        }
     }
 
     async search(
@@ -1658,6 +2005,16 @@ class Provider {
                             "ansembed.net" ||
                             hostname.endsWith(
                                 ".ansembed.net"
+                            ) ||
+                            hostname ===
+                            "lpayer.embed4me.com" ||
+                            hostname.endsWith(
+                                ".embed4me.com"
+                            ) ||
+                            hostname ===
+                            "embed4me.net" ||
+                            hostname.endsWith(
+                                ".embed4me.net"
                             )
                         );
 
