@@ -1199,6 +1199,10 @@ class Provider {
             }
         );
 
+        console.log(
+            `[ANSEMBED] HLS candidates: ${videoUrls.length}`
+        );
+
         const videos:
             VideoSource[] = [];
 
@@ -1230,14 +1234,13 @@ class Provider {
                     `https:${finalUrl}`;
             }
 
-            const bestVariant =
-                await this.resolveBestM3u8Variant(
-                    finalUrl
-                );
+            console.log(
+                `[ANSEMBED] Returning master playlist: ${finalUrl.split("?")[0]}`
+            );
 
             videos.push({
                 url:
-                    bestVariant,
+                    finalUrl,
                 type:
                     "m3u8" as VideoSourceType,
                 quality:
