@@ -2152,40 +2152,75 @@ class Provider {
             )
         ];
 
-        const serverUrl =
-            servers.find(
-                url => {
-                    try {
-                        const hostname =
-                            new URL(url)
-                                .hostname
-                                .toLowerCase();
+        const candidates =
+            servers
+                .map(
+                    url => {
+                        try {
+                            const hostname =
+                                new URL(url)
+                                    .hostname
+                                    .toLowerCase();
 
-                        return (
-                            hostname ===
-                            "ansembed.net" ||
-                            hostname.endsWith(
-                                ".ansembed.net"
-                            ) ||
-                            hostname ===
-                            "lpayer.embed4me.com" ||
-                            hostname.endsWith(
-                                ".embed4me.com"
-                            ) ||
-                            hostname ===
-                            "embed4me.net" ||
-                            hostname.endsWith(
-                                ".embed4me.net"
-                            )
-                        );
+                            if (
+                                hostname ===
+                                "ansembed.net" ||
+                                hostname.endsWith(
+                                    ".ansembed.net"
+                                )
+                            ) {
+                                return {
+                                    url,
+                                    priority:
+                                        0
+                                };
+                            }
 
-                    } catch (error) {
-                        return false;
+                            if (
+                                hostname ===
+                                "lpayer.embed4me.com" ||
+                                hostname.endsWith(
+                                    ".embed4me.com"
+                                ) ||
+                                hostname ===
+                                "embed4me.net" ||
+                                hostname.endsWith(
+                                    ".embed4me.net"
+                                )
+                            ) {
+                                return {
+                                    url,
+                                    priority:
+                                        1
+                                };
+                            }
+
+                            return null;
+
+                        } catch (error) {
+                            return null;
+                        }
                     }
-                }
-            );
+                )
+                .filter(
+                    (
+                        candidate
+                    ): candidate is {
+                        url: string;
+                        priority: number;
+                    } =>
+                        candidate !== null
+                )
+                .sort(
+                    (a, b) =>
+                        a.priority -
+                        b.priority
+                );
 
-        if (!serverUrl) {
+        if (
+            candidates.length ===
+            0
+        ) {
             console.log(
                 "[ANSEMBED] No AnsEmbed URL for this episode"
             );
@@ -2197,18 +2232,49 @@ class Provider {
             };
         }
 
-        console.log(
-            `[ANSEMBED] Handling: ${serverUrl}`
-        );
+        for (
+            const candidate of candidates
+        ) {
+            const serverUrl =
+                candidate.url;
 
-        const videoSources =
-            await this.HandleAnsEmbedUrl(
-                serverUrl
+            console.log(
+                `[ANSEMBED] Handling: ${serverUrl}`
             );
 
+            const videoSources =
+                await this.HandleAnsEmbedUrl(
+                    serverUrl
+                );
+
+            if (
+                videoSources.length ===
+                0
+            ) {
+                console.log(
+                    `[ANSEMBED] No playable video source found for ${serverUrl}`
+                );
+
+                continue;
+            }
+
+            const referer =
+                new URL(serverUrl)
+                    .origin +
+                "/";
+
+            return {
+                headers: {
+                    referer
+                },
+                server:
+                    "ansembed",
+                videoSources
+            };
+        }
+
         if (
-            videoSources.length ===
-            0
+            candidates.length > 0
         ) {
             console.log(
                 "[ANSEMBED] No playable video source found"
@@ -2221,18 +2287,10 @@ class Provider {
             };
         }
 
-        const referer =
-            new URL(serverUrl)
-                .origin +
-            "/";
-
-        return {
-            headers: {
-                referer
-            },
-            server:
-                "ansembed",
-            videoSources
+        return <EpisodeServer>{
+            headers: {},
+            server: "",
+            videoSources: []
         };
     }
 }
