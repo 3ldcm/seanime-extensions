@@ -1409,17 +1409,182 @@ class Provider {
         return bytes;
     }
 
+    private stringToBytes(
+        value: string
+    ): Uint8Array {
+        const bytes =
+            new Uint8Array(
+                value.length
+            );
+
+        for (
+            let index = 0;
+            index < value.length;
+            index++
+        ) {
+            bytes[index] =
+                value.charCodeAt(
+                    index
+                ) & 0xff;
+        }
+
+        return bytes;
+    }
+
+    private bytesToArrayBuffer(
+        bytes: Uint8Array
+    ): ArrayBuffer {
+        return bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset +
+            bytes.byteLength
+        ) as ArrayBuffer;
+    }
+
+    private utf8Decode(
+        bytes: Uint8Array
+    ): string {
+        let result = "";
+        let index = 0;
+
+        while (
+            index < bytes.length
+        ) {
+            const first =
+                bytes[index++];
+
+            if (
+                first < 0x80
+            ) {
+                result +=
+                    String.fromCharCode(
+                        first
+                    );
+
+                continue;
+            }
+
+            if (
+                first >= 0xc0 &&
+                first < 0xe0 &&
+                index < bytes.length
+            ) {
+                const second =
+                    bytes[index++];
+
+                result +=
+                    String.fromCharCode(
+                        (
+                            (first & 0x1f) << 6
+                        ) |
+                        (
+                            second & 0x3f
+                        )
+                    );
+
+                continue;
+            }
+
+            if (
+                first >= 0xe0 &&
+                first < 0xf0 &&
+                index + 1 < bytes.length
+            ) {
+                const second =
+                    bytes[index++];
+
+                const third =
+                    bytes[index++];
+
+                result +=
+                    String.fromCharCode(
+                        (
+                            (first & 0x0f) << 12
+                        ) |
+                        (
+                            (second & 0x3f) << 6
+                        ) |
+                        (
+                            third & 0x3f
+                        )
+                    );
+
+                continue;
+            }
+
+            if (
+                first >= 0xf0 &&
+                first < 0xf8 &&
+                index + 2 < bytes.length
+            ) {
+                const second =
+                    bytes[index++];
+
+                const third =
+                    bytes[index++];
+
+                const fourth =
+                    bytes[index++];
+
+                let codePoint =
+                    (
+                        (first & 0x07) << 18
+                    ) |
+                    (
+                        (second & 0x3f) << 12
+                    ) |
+                    (
+                        (third & 0x3f) << 6
+                    ) |
+                    (
+                        fourth & 0x3f
+                    );
+
+                codePoint -=
+                    0x10000;
+
+                result +=
+                    String.fromCharCode(
+                        0xd800 +
+                        (
+                            codePoint >> 10
+                        ),
+                        0xdc00 +
+                        (
+                            codePoint & 0x3ff
+                        )
+                    );
+
+                continue;
+            }
+
+            result +=
+                String.fromCharCode(
+                    first
+                );
+        }
+
+        return result;
+    }
+
     private async decryptEmbed4mePayload(
         hexData: string
     ): Promise<string> {
-        const encoder =
-            new TextEncoder();
+        const keyBytes =
+            this.stringToBytes(
+                "kiemtienmua911ca"
+            );
+
+        const ivBytes =
+            this.stringToBytes(
+                "1234567890oiuytr"
+            );
 
         const key =
             await crypto.subtle.importKey(
                 "raw",
-                encoder.encode(
-                    "kiemtienmua911ca"
+                this.bytesToArrayBuffer(
+                    keyBytes
                 ),
                 {
                     name:
@@ -1436,31 +1601,27 @@ class Provider {
                 hexData
             );
 
-        const encryptedBuffer =
-            encryptedData.buffer.slice(
-                encryptedData.byteOffset,
-                encryptedData.byteOffset +
-                encryptedData.byteLength
-            ) as ArrayBuffer;
-
         const decrypted =
             await crypto.subtle.decrypt(
                 {
                     name:
                         "AES-CBC",
                     iv:
-                        encoder.encode(
-                            "1234567890oiuytr"
+                        this.bytesToArrayBuffer(
+                            ivBytes
                         )
                 },
                 key,
-                encryptedBuffer
+                this.bytesToArrayBuffer(
+                    encryptedData
+                )
             );
 
-        return new TextDecoder()
-            .decode(
+        return this.utf8Decode(
+            new Uint8Array(
                 decrypted
-            );
+            )
+        );
     }
 
     private async HandleEmbed4meUrl(
