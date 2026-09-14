@@ -194,6 +194,71 @@ class Provider {
         );
     }
 
+    private hasDubMarker(
+        value: string
+    ): boolean {
+        const normalized =
+            this.normalizeTitle(value);
+
+        const lower =
+            value.toLowerCase();
+
+        return (
+            /\bvf\d*\b/.test(normalized) ||
+            /(?:^|[-_/])vf\d*(?:[-_/]|$)/.test(lower)
+        );
+    }
+
+    private hasSubMarker(
+        value: string
+    ): boolean {
+        const normalized =
+            this.normalizeTitle(value);
+
+        const lower =
+            value.toLowerCase();
+
+        return (
+            /\bvostfr\b/.test(normalized) ||
+            /(?:^|[-_/])vostfr(?:[-_/]|$)/.test(lower)
+        );
+    }
+
+    private detectResultDub(
+        title: string,
+        url: string,
+        chapterHints: string[]
+    ): boolean | null {
+        const haystacks =
+            [
+                title,
+                url,
+                ...chapterHints
+            ];
+
+        for (
+            const value of haystacks
+        ) {
+            if (
+                this.hasDubMarker(value)
+            ) {
+                return true;
+            }
+        }
+
+        for (
+            const value of haystacks
+        ) {
+            if (
+                this.hasSubMarker(value)
+            ) {
+                return false;
+            }
+        }
+
+        return null;
+    }
+
     private cleanServerName(
         label: string
     ): string {
@@ -496,7 +561,7 @@ class Provider {
                 await LoadDoc(html);
 
             const results =
-                $(".c-tabs-item .post-title a, .tab-summary .post-title a");
+                $(".c-tabs-item");
 
             const seen:
                 Record<string, boolean> = {};
@@ -505,6 +570,14 @@ class Provider {
                 title: string;
                 url: string;
                 score: number;
+                isDub: boolean;
+            }[] = [];
+
+            const fallbackItems: {
+                title: string;
+                url: string;
+                score: number;
+                isDub: boolean;
             }[] = [];
 
             for (
@@ -512,8 +585,13 @@ class Provider {
                 i < results.length();
                 i++
             ) {
-                const item =
+                const result =
                     results.eq(i);
+
+                const item =
+                    result.find(
+                        ".post-title a, .tab-summary .post-title a"
+                    ).first();
 
                 const href =
                     item.attr("href") || "";
@@ -533,15 +611,77 @@ class Provider {
                 seen[href] =
                     true;
 
+                const chapterHints:
+                    string[] = [];
+
+                const chapterLinks =
+                    result.find(
+                        ".chapter a, .latest-chap a, .list-chapter a"
+                    );
+
+                for (
+                    let j = 0;
+                    j < chapterLinks.length();
+                    j++
+                ) {
+                    const chapter =
+                        chapterLinks.eq(j);
+
+                    chapterHints.push(
+                        chapter.text(),
+                        chapter.attr("href") || ""
+                    );
+                }
+
+                const detectedDub =
+                    this.detectResultDub(
+                        title,
+                        href,
+                        chapterHints
+                    );
+
                 const isDub =
-                    title.toLowerCase()
-                        .includes("(vf)") ||
-                    href.toLowerCase()
-                        .includes("-vf/");
+                    detectedDub === null
+                        ? false
+                        : detectedDub;
+
+                console.log(
+                    "[VOIRANIME] Candidate:",
+                    title,
+                    href,
+                    "lang=" + (
+                        isDub
+                            ? "vf"
+                            : "vostfr"
+                    ),
+                    "requested=" + (
+                        opts.dub
+                            ? "vf"
+                            : "vostfr"
+                    )
+                );
 
                 if (
                     opts.dub !== isDub
                 ) {
+                    if (
+                        opts.dub &&
+                        !isDub
+                    ) {
+                        fallbackItems.push({
+                            title,
+                            url:
+                                href,
+                            score:
+                                this.scoreSearchResult(
+                                    tempQuery,
+                                    title,
+                                    href
+                                ),
+                            isDub
+                        });
+                    }
+
                     continue;
                 }
 
@@ -554,8 +694,43 @@ class Provider {
                             tempQuery,
                             title,
                             href
-                        )
+                        ),
+                    isDub
                 });
+            }
+
+            if (
+                items.length === 0 &&
+                fallbackItems.length > 0
+            ) {
+                console.log(
+                    "[VOIRANIME] No VF result found, falling back to VOSTFR"
+                );
+
+                return fallbackItems
+                    .sort(
+                        (a, b) =>
+                            b.score -
+                            a.score
+                    )
+                    .slice(
+                        0,
+                        10
+                    )
+                    .map(
+                        item => ({
+                            id:
+                                item.url,
+                            title:
+                                item.title,
+                            url:
+                                item.url,
+                            subOrDub:
+                                item.isDub
+                                    ? "dub"
+                                    : "sub"
+                        })
+                    );
             }
 
             if (
@@ -594,7 +769,7 @@ class Provider {
                         url:
                             item.url,
                         subOrDub:
-                            opts.dub
+                            item.isDub
                                 ? "dub"
                                 : "sub"
                     })
