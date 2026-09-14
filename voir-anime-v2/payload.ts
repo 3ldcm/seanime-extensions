@@ -14,7 +14,10 @@ class Provider {
     readonly BASE_URL = "https://voir-anime.to";
 
     private readonly SUPPORTED_SERVERS = [
-        "mytv"
+        "mytv",
+        "voe",
+        "moon",
+        "stape"
     ];
 
     private static readonly QUERY_SPLIT_RE =
@@ -862,7 +865,7 @@ class Provider {
     ): Promise<EpisodeServer> {
 
         const requestedServer =
-            (_server || "mytv")
+            (_server || "")
                 .toLowerCase();
 
         const response =
@@ -888,73 +891,101 @@ class Provider {
                 html
             );
 
-        const iframeUrl =
-            sources[requestedServer] ||
-            sources.mytv ||
-            "";
+        const isKnownServer =
+            this.SUPPORTED_SERVERS.indexOf(
+                requestedServer
+            ) !== -1;
 
-        if (
-            !iframeUrl
+        const candidateServers =
+            isKnownServer
+                ? [requestedServer]
+                : this.SUPPORTED_SERVERS;
+
+        for (
+            const server of candidateServers
         ) {
+            const iframeUrl =
+                sources[server] ||
+                "";
+
+            if (
+                !iframeUrl
+            ) {
+                console.log(
+                    "[VOIRANIME] Server source missing:",
+                    server
+                );
+
+                continue;
+            }
+
             console.log(
-                "[VOIRANIME] No iframe source found"
+                "[VOIRANIME] Iframe:",
+                server,
+                iframeUrl
             );
 
-            return <EpisodeServer>{
-                headers: {},
-                server: "",
-                videoSources: []
+            const iframeResponse =
+                await this.proxyFetch(
+                    iframeUrl,
+                    {
+                        Referer:
+                            episode.id
+                    }
+                );
+
+            if (
+                !iframeResponse.ok
+            ) {
+                console.log(
+                    "[VOIRANIME] Iframe HTTP:",
+                    server,
+                    iframeResponse.status
+                );
+
+                continue;
+            }
+
+            const iframeHtml =
+                await iframeResponse.text();
+
+            const videoSources =
+                this.extractVideoSourcesFromHtml(
+                    iframeHtml,
+                    iframeUrl
+                );
+
+            if (
+                videoSources.length === 0
+            ) {
+                console.log(
+                    "[VOIRANIME] Server returned no video source:",
+                    server
+                );
+
+                continue;
+            }
+
+            return {
+                headers: {
+                    referer:
+                        new URL(
+                            iframeUrl
+                        ).origin + "/"
+                },
+                server,
+                videoSources
             };
         }
 
         console.log(
-            "[VOIRANIME] Iframe:",
-            iframeUrl
+            "[VOIRANIME] No iframe source found"
         );
 
-        const iframeResponse =
-            await this.proxyFetch(
-                iframeUrl,
-                {
-                    Referer:
-                        episode.id
-                }
-            );
-
-        if (
-            !iframeResponse.ok
-        ) {
-            console.log(
-                "[VOIRANIME] Iframe HTTP:",
-                iframeResponse.status
-            );
-
-            return <EpisodeServer>{
-                headers: {},
-                server: "",
-                videoSources: []
-            };
-        }
-
-        const iframeHtml =
-            await iframeResponse.text();
-
-        const videoSources =
-            this.extractVideoSourcesFromHtml(
-                iframeHtml,
-                iframeUrl
-            );
-
-        return {
-            headers: {
-                referer:
-                    new URL(
-                        iframeUrl
-                    ).origin + "/"
-            },
-            server:
-                requestedServer,
-            videoSources
+        return <EpisodeServer>{
+            headers: {},
+            server: "",
+            videoSources: []
         };
     }
 }
