@@ -726,9 +726,7 @@ class Provider {
                             url:
                                 item.url,
                             subOrDub:
-                                item.isDub
-                                    ? "dub"
-                                    : "sub"
+                                "dub"
                         })
                     );
             }

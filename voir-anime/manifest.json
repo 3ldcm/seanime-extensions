@@ -1,7 +1,7 @@
 {
     "id": "voir-anime-online-streaming",
     "name": "VoirAnime",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/voir-anime/manifest.json",
     "language": "typescript",
     "type": "onlinestream-provider",
