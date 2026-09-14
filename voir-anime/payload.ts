@@ -560,8 +560,13 @@ class Provider {
             const $ =
                 await LoadDoc(html);
 
+            const resultRows =
+                $(".c-tabs-item__content");
+
             const results =
-                $(".c-tabs-item");
+                resultRows.length() > 0
+                    ? resultRows
+                    : $(".c-tabs-item");
 
             const seen:
                 Record<string, boolean> = {};
