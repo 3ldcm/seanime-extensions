@@ -44,6 +44,19 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/voir-anime/manif
 - `manifest.json` — Métadonnées extension
 - `payload.ts` — Provider TypeScript
 
+### 🎬 VoirAnime V2 (Streaming Provider expérimental)
+
+Provider VoirAnime séparé pour tester les correctifs sans casser la version stable.
+
+**Installation :** Seanime → Extensions → Add extensions → coller l'URL :
+```
+https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/voir-anime-v2/manifest.json
+```
+
+**Fichiers :**
+- `manifest.json` — Métadonnées extension
+- `payload.ts` — Provider TypeScript
+
 ### 📺 Chrome Cast (Plugin)
 
 Plugin expérimental pour activer la lecture distante / Cast natif dans Seanime Web.
