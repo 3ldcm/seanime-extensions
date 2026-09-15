@@ -49,6 +49,8 @@ type FranimeEpisodeId = {
 
 class Provider {
     readonly API_URL = "https://api.franime.fr/api";
+    readonly SITE_URL = "https://franime.fr";
+    readonly SITE_REFERER = "https://franime.fr/anime/watch";
 
     private readonly SUPPORTED_SERVERS = [
         "sibnet",
@@ -91,11 +93,21 @@ class Provider {
                     "Accept":
                         "application/json,text/html,*/*",
                     "Origin":
-                        "https://franime.fr",
+                        this.SITE_URL,
                     "Referer":
-                        "https://franime.fr/",
+                        this.SITE_REFERER,
+                    "Accept-Language":
+                        "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Sec-Fetch-Dest":
+                        "document",
+                    "Sec-Fetch-Mode":
+                        "navigate",
+                    "Sec-Fetch-Site":
+                        "none",
+                    "Upgrade-Insecure-Requests":
+                        "1",
                     "User-Agent":
-                        "Mozilla/5.0"
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                 }
             }
         );
@@ -284,6 +296,117 @@ class Provider {
         }
 
         return out;
+    }
+
+    private forceHttps(
+        value: string
+    ): string {
+        if (
+            value.indexOf("//") === 0
+        ) {
+            return "https:" + value;
+        }
+
+        return value.replace(
+            /^http:\/\//i,
+            "https://"
+        );
+    }
+
+    private decodeFranimeEmbed(
+        value: string
+    ): string {
+        try {
+            let decodedValue =
+                value;
+
+            try {
+                decodedValue =
+                    decodeURIComponent(value);
+            } catch (error) {
+                decodedValue =
+                    value;
+            }
+
+            const hex =
+                atob(decodedValue);
+
+            const bytes:
+                number[] =
+                    [];
+
+            for (
+                let i = 0;
+                i + 1 < hex.length;
+                i += 2
+            ) {
+                bytes.push(
+                    parseInt(
+                        hex.slice(i, i + 2),
+                        16
+                    )
+                );
+            }
+
+            if (
+                bytes.length === 0 ||
+                isNaN(bytes[0])
+            ) {
+                return "";
+            }
+
+            const key =
+                bytes[0] ^ 0x68;
+
+            let out =
+                "";
+
+            for (const byte of bytes) {
+                if (isNaN(byte)) {
+                    return "";
+                }
+
+                out +=
+                    String.fromCharCode(
+                        (byte ^ key) & 0xff
+                    );
+            }
+
+            if (
+                !/^https?:\/\//i.test(out)
+            ) {
+                return "";
+            }
+
+            return this.forceHttps(out);
+        } catch (error) {
+            return "";
+        }
+    }
+
+    private extractWatch2Embed(
+        value: string
+    ): string {
+        if (
+            !value ||
+            value.indexOf("/watch2") === -1
+        ) {
+            return "";
+        }
+
+        const match =
+            value.match(/[?&]b=([^&]+)/);
+
+        if (
+            !match ||
+            !match[1]
+        ) {
+            return "";
+        }
+
+        return this.decodeFranimeEmbed(
+            match[1]
+        );
     }
 
     private extractVideoSources(
@@ -637,25 +760,46 @@ class Provider {
         }
 
         const ordered:
-            string[] =
+            Array<{
+                name: string;
+                index: number;
+            }> =
                 [];
 
         if (requested) {
-            for (const server of servers) {
+            for (
+                let index = 0;
+                index < servers.length;
+                index++
+            ) {
+                const server =
+                    servers[index];
+
                 if (
                     server.toLowerCase() === requested
                 ) {
-                    ordered.push(server);
+                    ordered.push({
+                        name:
+                            server,
+                        index
+                    });
                 }
             }
         }
 
-        for (const server of servers) {
+        for (
+            let index = 0;
+            index < servers.length;
+            index++
+        ) {
+            const server =
+                servers[index];
+
             let exists = false;
 
             for (const current of ordered) {
                 if (
-                    current.toLowerCase() === server.toLowerCase()
+                    current.name.toLowerCase() === server.toLowerCase()
                 ) {
                     exists = true;
                     break;
@@ -663,22 +807,35 @@ class Provider {
             }
 
             if (!exists) {
-                ordered.push(server);
+                ordered.push({
+                    name:
+                        server,
+                    index
+                });
             }
         }
 
-        for (const server of ordered) {
+        for (const item of ordered) {
+            const server =
+                item.name;
+
+            const seasonIndex =
+                id.season - 1;
+
+            const episodeIndex =
+                id.episode - 1;
+
             const endpoint =
                 "anime/" +
                 id.animeId +
                 "/" +
-                id.season +
+                seasonIndex +
+                "/" +
+                episodeIndex +
                 "/" +
                 id.lang +
                 "/" +
-                id.episode +
-                "/" +
-                encodeURIComponent(server);
+                item.index;
 
             const response =
                 await this.apiFetch(endpoint);
@@ -710,6 +867,70 @@ class Provider {
                 continue;
             }
 
+            const watch2Embed =
+                this.extractWatch2Embed(text);
+
+            if (
+                watch2Embed
+            ) {
+                console.log(
+                    "[FRANIME] Watch2 embed:",
+                    server,
+                    watch2Embed
+                );
+
+                const embedResponse =
+                    await fetch(
+                        watch2Embed,
+                        {
+                            headers: {
+                                Referer:
+                                    this.SITE_REFERER,
+                                "User-Agent":
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                            }
+                        }
+                    );
+
+                if (
+                    embedResponse.ok
+                ) {
+                    const embedHtml =
+                        await embedResponse.text();
+
+                    const embedSources =
+                        this.extractVideoSources(
+                            embedHtml,
+                            server
+                        );
+
+                    if (
+                        embedSources.length > 0
+                    ) {
+                        return {
+                            headers: {
+                                referer:
+                                    new URL(watch2Embed).origin + "/"
+                            },
+                            server,
+                            videoSources:
+                                embedSources
+                        };
+                    }
+
+                    console.log(
+                        "[FRANIME] Watch2 embed has no direct video source:",
+                        server
+                    );
+                } else {
+                    console.log(
+                        "[FRANIME] Watch2 embed HTTP:",
+                        server,
+                        embedResponse.status
+                    );
+                }
+            }
+
             const directSources =
                 this.extractVideoSources(
                     text,
@@ -722,7 +943,7 @@ class Provider {
                 return {
                     headers: {
                         referer:
-                            "https://franime.fr/"
+                            this.SITE_REFERER
                     },
                     server,
                     videoSources:
@@ -758,9 +979,9 @@ class Provider {
                     {
                         headers: {
                             Referer:
-                                "https://franime.fr/",
+                                this.SITE_REFERER,
                             "User-Agent":
-                                "Mozilla/5.0"
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                         }
                     }
                 );
