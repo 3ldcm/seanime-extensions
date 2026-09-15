@@ -329,7 +329,7 @@ class Provider {
             }
 
             const hex =
-                atob(decodedValue);
+                this.base64Decode(decodedValue);
 
             const bytes:
                 number[] =
@@ -384,6 +384,65 @@ class Provider {
         }
     }
 
+    private base64Decode(
+        value: string
+    ): string {
+        const alphabet =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+        const cleaned =
+            value
+                .replace(/-/g, "+")
+                .replace(/_/g, "/")
+                .replace(/[^A-Za-z0-9+/=]/g, "");
+
+        let buffer =
+            0;
+
+        let bits =
+            0;
+
+        let out =
+            "";
+
+        for (const char of cleaned) {
+            if (
+                char === "="
+            ) {
+                break;
+            }
+
+            const index =
+                alphabet.indexOf(char);
+
+            if (
+                index < 0
+            ) {
+                continue;
+            }
+
+            buffer =
+                (buffer << 6) | index;
+
+            bits +=
+                6;
+
+            if (
+                bits >= 8
+            ) {
+                bits -=
+                    8;
+
+                out +=
+                    String.fromCharCode(
+                        (buffer >> bits) & 0xff
+                    );
+            }
+        }
+
+        return out;
+    }
+
     private extractWatch2Embed(
         value: string
     ): string {
@@ -404,9 +463,20 @@ class Provider {
             return "";
         }
 
-        return this.decodeFranimeEmbed(
+        const embed =
+            this.decodeFranimeEmbed(
             match[1]
         );
+
+        if (
+            !embed
+        ) {
+            console.log(
+                "[FRANIME] Watch2 b decode failed"
+            );
+        }
+
+        return embed;
     }
 
     private extractVideoSources(
