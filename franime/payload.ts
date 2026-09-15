@@ -663,6 +663,147 @@ class Provider {
         return sources;
     }
 
+    private async extractSibnet(
+        url: string
+    ): Promise<VideoSource[]> {
+        try {
+            const response =
+                await fetch(
+                    url,
+                    {
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                            "Referer":
+                                "https://franime.fr/"
+                        }
+                    }
+                );
+
+            if (
+                !response.ok
+            ) {
+                console.log(
+                    "[FRANIME] Sibnet embed HTTP:",
+                    response.status
+                );
+
+                return [];
+            }
+
+            const html =
+                await response.text();
+
+            const match =
+                html.match(
+                    /src:\s*["'](\/v\/[a-f0-9]+\/\d+\.mp4)["']/i
+                );
+
+            if (
+                !match ||
+                !match[1]
+            ) {
+                console.log(
+                    "[FRANIME] Sibnet video path not found"
+                );
+
+                return [];
+            }
+
+            const videoPath =
+                match[1];
+
+            const videoUrl =
+                "https://video.sibnet.ru" +
+                videoPath;
+
+            console.log(
+                "[FRANIME] Sibnet intermediate video:",
+                videoUrl
+            );
+
+            /*
+             * IMPORTANT:
+             * Seanime's fetch implementation may or may not expose
+             * redirect:"manual" exactly like Node/browser fetch.
+             *
+             * First try to resolve the redirect.
+             */
+            const redirectResponse =
+                await fetch(
+                    videoUrl,
+                    {
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                            "Referer":
+                                url
+                        },
+                        redirect:
+                            "manual"
+                    }
+                );
+
+            let finalUrl =
+                redirectResponse.headers.get(
+                    "location"
+                );
+
+            if (
+                !finalUrl
+            ) {
+                /*
+                 * Some fetch implementations automatically
+                 * follow the redirect despite the option.
+                 */
+                finalUrl =
+                    redirectResponse.url || "";
+            }
+
+            if (
+                !finalUrl
+            ) {
+                console.log(
+                    "[FRANIME] Sibnet CDN redirect not found"
+                );
+
+                return [];
+            }
+
+            if (
+                finalUrl.indexOf("//") === 0
+            ) {
+                finalUrl =
+                    "https:" + finalUrl;
+            }
+
+            console.log(
+                "[FRANIME] Sibnet final video:",
+                finalUrl
+            );
+
+            return [
+                {
+                    url:
+                        finalUrl,
+                    type:
+                        "mp4" as VideoSourceType,
+                    quality:
+                        "sibnet - auto",
+                    subtitles:
+                        []
+                }
+            ];
+        } catch (error) {
+            console.log(
+                "[FRANIME] Sibnet extraction error:",
+                String(error)
+            );
+
+            return [];
+        }
+    }
+
     private extractIframeUrl(
         text: string
     ): string {
@@ -1090,6 +1231,39 @@ class Provider {
                     watch2Embed
                 );
 
+                if (
+                    watch2Embed.indexOf(
+                        "video.sibnet.ru"
+                    ) !== -1
+                ) {
+                    const sibnetSources =
+                        await this.extractSibnet(
+                            watch2Embed
+                        );
+
+                    if (
+                        sibnetSources.length > 0
+                    ) {
+                        return {
+                            headers: {
+                                referer:
+                                    watch2Embed
+                            },
+                            server:
+                                server,
+                            videoSources:
+                                sibnetSources
+                        };
+                    }
+
+                    console.log(
+                        "[FRANIME] Sibnet extraction failed:",
+                        watch2Embed
+                    );
+
+                    continue;
+                }
+
                 const embedResponse =
                     await fetch(
                         watch2Embed,
@@ -1174,6 +1348,40 @@ class Provider {
                 console.log(
                     "[FRANIME] Skipping undecoded watch2 iframe:",
                     iframeUrl.substring(0, 300)
+                );
+
+                continue;
+            }
+
+            if (
+                iframeUrl &&
+                iframeUrl.indexOf(
+                    "video.sibnet.ru"
+                ) !== -1
+            ) {
+                const sibnetSources =
+                    await this.extractSibnet(
+                        iframeUrl
+                    );
+
+                if (
+                    sibnetSources.length > 0
+                ) {
+                    return {
+                        headers: {
+                            referer:
+                                iframeUrl
+                        },
+                        server:
+                            server,
+                        videoSources:
+                            sibnetSources
+                    };
+                }
+
+                console.log(
+                    "[FRANIME] Sibnet extraction failed:",
+                    iframeUrl
                 );
 
                 continue;
