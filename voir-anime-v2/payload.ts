@@ -416,8 +416,25 @@ class Provider {
 
     private extractVideoSourcesFromHtml(
         html: string,
-        iframeUrl: string
+        iframeUrl: string,
+        server: string
     ): VideoSource[] {
+        if (
+            server === "voe"
+        ) {
+            const voeSources =
+                this.extractVoeSourcesFromHtml(
+                    html,
+                    iframeUrl
+                );
+
+            if (
+                voeSources.length > 0
+            ) {
+                return voeSources;
+            }
+        }
+
         const unescapedHtml =
             html
                 .replace(/\\\//g, "/")
@@ -484,6 +501,7 @@ class Provider {
 
         console.log(
             "[VOIRANIME] Video candidates:",
+            server,
             urls.length
         );
 
@@ -498,11 +516,395 @@ class Provider {
                         ? "m3u8" as VideoSourceType
                         : "mp4" as VideoSourceType,
                 quality:
-                    "mytv - auto",
+                    server + " - auto",
                 subtitles:
                     []
             })
         );
+    }
+
+    private extractVoeSourcesFromHtml(
+        html: string,
+        iframeUrl: string
+    ): VideoSource[] {
+        const scripts:
+            string[] = [];
+
+        const scriptRe =
+            /<script\b(?![^>]*\btype=["']application\/json["'])[^>]*>([\s\S]*?)<\/script>/gi;
+
+        let match:
+            RegExpExecArray | null;
+
+        while (
+            (match = scriptRe.exec(html)) !== null
+        ) {
+            scripts.push(
+                match[1]
+            );
+        }
+
+        let capturedConfig:
+            any = null;
+
+        const player:
+            any = {
+                setup:
+                    function (config: any) {
+                        capturedConfig =
+                            config;
+
+                        return player;
+                    },
+                on:
+                    function () {
+                        return player;
+                    },
+                once:
+                    function () {
+                        return player;
+                    },
+                getPlaylist:
+                    function () {
+                        return capturedConfig
+                            ? [capturedConfig]
+                            : [];
+                    }
+            };
+
+        const jwplayer =
+            function () {
+                return player;
+            };
+
+        const storage:
+            Record<string, string> = {};
+
+        const localStorage =
+            {
+                getItem:
+                    function (key: string) {
+                        return storage[key] || null;
+                    },
+                setItem:
+                    function (key: string, value: string) {
+                        storage[key] =
+                            value;
+                    },
+                removeItem:
+                    function (key: string) {
+                        delete storage[key];
+                    }
+            };
+
+        const location =
+            {
+                href:
+                    iframeUrl,
+                protocol:
+                    "https:",
+                replace:
+                    function () {}
+            };
+
+        const document:
+            any = {
+                body:
+                    {
+                        appendChild:
+                            function () {},
+                        removeChild:
+                            function () {},
+                        innerHTML:
+                            ""
+                    },
+                currentScript:
+                    {},
+                domain:
+                    new URL(
+                        iframeUrl
+                    ).hostname,
+                documentElement:
+                    {},
+                createElement:
+                    function () {
+                        return {
+                            setAttribute:
+                                function () {},
+                            appendChild:
+                                function () {},
+                            style:
+                                {},
+                            contentWindow:
+                                {
+                                    document:
+                                        {
+                                            createElement:
+                                                function () {
+                                                    return {
+                                                        setAttribute:
+                                                            function () {},
+                                                        style:
+                                                            {}
+                                                    };
+                                                },
+                                            body:
+                                                {
+                                                    appendChild:
+                                                        function () {}
+                                                }
+                                        }
+                                }
+                        };
+                    },
+                getElementById:
+                    function () {
+                        return null;
+                    },
+                getElementsByTagName:
+                    function () {
+                        return [];
+                    },
+                querySelector:
+                    function () {
+                        return null;
+                    },
+                write:
+                    function () {}
+            };
+
+        const window:
+            any = {
+                document,
+                jwplayer,
+                localStorage,
+                location,
+                parent:
+                    {},
+                screen:
+                    {
+                        availWidth:
+                            1280,
+                        availHeight:
+                            720,
+                        width:
+                            1280,
+                        height:
+                            720
+                    },
+                navigator:
+                    {
+                        platform:
+                            "Linux",
+                        userAgent:
+                            "Mozilla/5.0"
+                    },
+                addEventListener:
+                    function () {},
+                dispatchEvent:
+                    function () {},
+                focus:
+                    function () {},
+                open:
+                    function () {
+                        return {
+                            closed:
+                                true,
+                            location:
+                                {
+                                    replace:
+                                        function () {}
+                                },
+                            blur:
+                                function () {}
+                        };
+                    },
+                setInterval:
+                    function () {
+                        return 0;
+                    },
+                clearInterval:
+                    function () {},
+                setTimeout:
+                    function () {
+                        return 0;
+                    },
+                console:
+                    {
+                        log:
+                            function () {},
+                        warn:
+                            function () {},
+                        clear:
+                            function () {}
+                    }
+            };
+
+        const navigator =
+            window.navigator;
+
+        const setTimeout =
+            window.setTimeout;
+
+        const setInterval =
+            window.setInterval;
+
+        const clearInterval =
+            window.clearInterval;
+
+        try {
+            for (
+                const script of scripts
+            ) {
+                if (
+                    script.indexOf(
+                        "import("
+                    ) !== -1
+                ) {
+                    continue;
+                }
+
+                eval(script);
+            }
+
+        } catch (error) {
+            console.log(
+                "[VOIRANIME] VOE eval failed:",
+                error
+            );
+        }
+
+        const urls:
+            string[] = [];
+
+        const collect =
+            function (value: any) {
+                if (
+                    !value
+                ) {
+                    return;
+                }
+
+                if (
+                    typeof value === "string"
+                ) {
+                    if (
+                        value.indexOf(".m3u8") !== -1 ||
+                        value.indexOf(".mp4") !== -1
+                    ) {
+                        urls.push(value);
+                    }
+
+                    return;
+                }
+
+                if (
+                    value.file
+                ) {
+                    collect(
+                        value.file
+                    );
+                }
+
+                if (
+                    value.sources
+                ) {
+                    for (
+                        const source of value.sources
+                    ) {
+                        collect(
+                            source
+                        );
+                    }
+                }
+
+                if (
+                    value.allSources
+                ) {
+                    for (
+                        const source of value.allSources
+                    ) {
+                        collect(
+                            source
+                        );
+                    }
+                }
+            };
+
+        collect(
+            capturedConfig
+        );
+
+        const seen:
+            Record<string, boolean> = {};
+
+        const videoSources:
+            VideoSource[] = [];
+
+        for (
+            const url of urls
+        ) {
+            if (
+                seen[url]
+            ) {
+                continue;
+            }
+
+            seen[url] =
+                true;
+
+            videoSources.push({
+                url,
+                type:
+                    url.indexOf(".m3u8") !== -1
+                        ? "m3u8" as VideoSourceType
+                        : "mp4" as VideoSourceType,
+                quality:
+                    "voe - auto",
+                subtitles:
+                    []
+            });
+        }
+
+        console.log(
+            "[VOIRANIME] VOE video candidates:",
+            videoSources.length
+        );
+
+        return videoSources;
+    }
+
+    private buildCandidateServers(
+        requestedServer: string
+    ): string[] {
+        const candidates:
+            string[] = [];
+
+        if (
+            this.SUPPORTED_SERVERS.indexOf(
+                requestedServer
+            ) !== -1
+        ) {
+            candidates.push(
+                requestedServer
+            );
+        }
+
+        for (
+            const server of this.SUPPORTED_SERVERS
+        ) {
+            if (
+                candidates.indexOf(
+                    server
+                ) === -1
+            ) {
+                candidates.push(
+                    server
+                );
+            }
+        }
+
+        return candidates;
     }
 
     async search(
@@ -891,15 +1293,10 @@ class Provider {
                 html
             );
 
-        const isKnownServer =
-            this.SUPPORTED_SERVERS.indexOf(
-                requestedServer
-            ) !== -1;
-
         const candidateServers =
-            isKnownServer
-                ? [requestedServer]
-                : this.SUPPORTED_SERVERS;
+            this.buildCandidateServers(
+                requestedServer
+            );
 
         for (
             const server of candidateServers
@@ -952,7 +1349,8 @@ class Provider {
             const videoSources =
                 this.extractVideoSourcesFromHtml(
                     iframeHtml,
-                    iframeUrl
+                    iframeUrl,
+                    server
                 );
 
             if (
