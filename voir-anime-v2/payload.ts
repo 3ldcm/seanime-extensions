@@ -414,16 +414,16 @@ class Provider {
         );
     }
 
-    private extractVideoSourcesFromHtml(
+    private async extractVideoSourcesFromHtml(
         html: string,
         iframeUrl: string,
         server: string
-    ): VideoSource[] {
+    ): Promise<VideoSource[]> {
         if (
             server === "voe"
         ) {
             const voeSources =
-                this.extractVoeSourcesFromHtml(
+                await this.extractVoeSourcesFromHtml(
                     html,
                     iframeUrl
                 );
@@ -523,12 +523,84 @@ class Provider {
         );
     }
 
-    private extractVoeSourcesFromHtml(
+    private async extractVoeSourcesFromHtml(
         html: string,
         iframeUrl: string
-    ): VideoSource[] {
+    ): Promise<VideoSource[]> {
         const scripts:
             string[] = [];
+
+        const externalScripts:
+            string[] = [];
+
+        const jsonMatch =
+            html.match(
+                /<script\b[^>]*\btype=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/i
+            );
+
+        const jsonScript =
+            {
+                type:
+                    "application/json",
+                textContent:
+                    jsonMatch
+                        ? jsonMatch[1]
+                        : "",
+                innerHTML:
+                    jsonMatch
+                        ? jsonMatch[1]
+                        : "",
+                previousElementSibling:
+                    null,
+                nextElementSibling:
+                    null
+            };
+
+        const srcScriptRe =
+            /<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*><\/script>/gi;
+
+        let srcMatch:
+            RegExpExecArray | null;
+
+        while (
+            (srcMatch = srcScriptRe.exec(html)) !== null
+        ) {
+            const src =
+                this.absoluteUrl(
+                    srcMatch[1]
+                );
+
+            if (
+                src.indexOf(
+                    "/js/loader"
+                ) !== -1
+            ) {
+                try {
+                    const response =
+                        await this.proxyFetch(
+                            src,
+                            {
+                                Referer:
+                                    iframeUrl
+                            }
+                        );
+
+                    if (
+                        response.ok
+                    ) {
+                        externalScripts.push(
+                            await response.text()
+                        );
+                    }
+
+                } catch (error) {
+                    console.log(
+                        "[VOIRANIME] VOE loader fetch failed:",
+                        error
+                    );
+                }
+            }
+        }
 
         const scriptRe =
             /<script\b(?![^>]*\btype=["']application\/json["'])[^>]*>([\s\S]*?)<\/script>/gi;
@@ -658,16 +730,63 @@ class Provider {
                         };
                     },
                 getElementById:
-                    function () {
+                    function (id: string) {
+                        if (
+                            id === "a"
+                        ) {
+                            return {
+                                style:
+                                    {},
+                                innerHTML:
+                                    "",
+                                appendChild:
+                                    function () {},
+                                querySelector:
+                                    function () {
+                                        return null;
+                                    }
+                            };
+                        }
+
                         return null;
                     },
-                getElementsByTagName:
+                getElementsByClassName:
                     function () {
                         return [];
                     },
+                getElementsByTagName:
+                    function (tag: string) {
+                        if (
+                            tag === "script"
+                        ) {
+                            return [jsonScript];
+                        }
+
+                        return [];
+                    },
                 querySelector:
-                    function () {
+                    function (selector: string) {
+                        if (
+                            selector.indexOf(
+                                "application/json"
+                            ) !== -1
+                        ) {
+                            return jsonScript;
+                        }
+
                         return null;
+                    },
+                querySelectorAll:
+                    function (selector: string) {
+                        if (
+                            selector.indexOf(
+                                "application/json"
+                            ) !== -1
+                        ) {
+                            return [jsonScript];
+                        }
+
+                        return [];
                     },
                 write:
                     function () {}
@@ -740,8 +859,47 @@ class Provider {
                     }
             };
 
-        const navigator =
+        const globalTarget:
+            any =
+                typeof globalThis === "object"
+                    ? globalThis
+                    : window;
+
+        globalTarget.window =
+            window;
+        globalTarget.document =
+            document;
+        globalTarget.navigator =
             window.navigator;
+        globalTarget.location =
+            location;
+        globalTarget.localStorage =
+            localStorage;
+        globalTarget.jwplayer =
+            jwplayer;
+        globalTarget.self =
+            window;
+        globalTarget.top =
+            window;
+        globalTarget.parent =
+            window.parent;
+        globalTarget.$ =
+            function () {
+                return {
+                    detach:
+                        function () {
+                            return this;
+                        },
+                    insertAfter:
+                        function () {
+                            return this;
+                        },
+                    show:
+                        function () {
+                            return this;
+                        }
+                };
+            };
 
         const setTimeout =
             window.setTimeout;
@@ -753,6 +911,12 @@ class Provider {
             window.clearInterval;
 
         try {
+            for (
+                const script of externalScripts
+            ) {
+                eval(script);
+            }
+
             for (
                 const script of scripts
             ) {
@@ -1347,7 +1511,7 @@ class Provider {
                 await iframeResponse.text();
 
             const videoSources =
-                this.extractVideoSourcesFromHtml(
+                await this.extractVideoSourcesFromHtml(
                     iframeHtml,
                     iframeUrl,
                     server
