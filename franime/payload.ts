@@ -318,18 +318,53 @@ class Provider {
     ): string {
         try {
             let decodedValue =
-                value;
+                value
+                    .replace(/&amp;/gi, "&")
+                    .trim();
 
             try {
                 decodedValue =
-                    decodeURIComponent(value);
+                    decodeURIComponent(
+                        decodedValue
+                    );
             } catch (error) {
-                decodedValue =
-                    value;
+                // Value may already be decoded.
             }
+
+            console.log(
+                "[FRANIME] Decoding b:",
+                decodedValue.substring(0, 120)
+            );
 
             const hex =
                 this.base64Decode(decodedValue);
+
+            if (
+                !hex
+            ) {
+                console.log(
+                    "[FRANIME] b base64 decode returned empty value"
+                );
+
+                return "";
+            }
+
+            console.log(
+                "[FRANIME] b base64 decoded length:",
+                hex.length
+            );
+
+            if (
+                !/^[0-9a-f]+$/i.test(hex) ||
+                hex.length < 4
+            ) {
+                console.log(
+                    "[FRANIME] b decoded value is not hexadecimal:",
+                    hex.substring(0, 120)
+                );
+
+                return "";
+            }
 
             const bytes:
                 number[] =
@@ -340,21 +375,31 @@ class Provider {
                 i + 1 < hex.length;
                 i += 2
             ) {
-                bytes.push(
+                const byte =
                     parseInt(
                         hex.slice(i, i + 2),
                         16
-                    )
-                );
+                    );
+
+                if (
+                    isNaN(byte)
+                ) {
+                    return "";
+                }
+
+                bytes.push(byte);
             }
 
             if (
-                bytes.length === 0 ||
-                isNaN(bytes[0])
+                bytes.length === 0
             ) {
                 return "";
             }
 
+            /*
+             * FRAnime's first decoded character is expected
+             * to be "h" from http(s).
+             */
             const key =
                 bytes[0] ^ 0x68;
 
@@ -362,24 +407,35 @@ class Provider {
                 "";
 
             for (const byte of bytes) {
-                if (isNaN(byte)) {
-                    return "";
-                }
-
                 out +=
                     String.fromCharCode(
                         (byte ^ key) & 0xff
                     );
             }
 
+            out =
+                out
+                    .replace(/\\\//g, "/")
+                    .trim();
+
             if (
                 !/^https?:\/\//i.test(out)
             ) {
+                console.log(
+                    "[FRANIME] XOR result is not an URL:",
+                    out.substring(0, 200)
+                );
+
                 return "";
             }
 
             return this.forceHttps(out);
         } catch (error) {
+            console.log(
+                "[FRANIME] decodeFranimeEmbed exception:",
+                String(error)
+            );
+
             return "";
         }
     }
@@ -447,34 +503,88 @@ class Provider {
         value: string
     ): string {
         if (
-            !value ||
-            value.indexOf("/watch2") === -1
+            !value
         ) {
             return "";
         }
 
+        let normalized =
+            value
+                .replace(/\\u0026/gi, "&")
+                .replace(/\\u003d/gi, "=")
+                .replace(/\\u002f/gi, "/")
+                .replace(/\\\//g, "/")
+                .replace(/&amp;/gi, "&");
+
+        try {
+            normalized =
+                normalized.replace(
+                    /\\x([0-9a-f]{2})/gi,
+                    (_match, hex) =>
+                        String.fromCharCode(
+                            parseInt(hex, 16)
+                        )
+                );
+        } catch (error) {
+            // Keep original normalized value.
+        }
+
+        if (
+            normalized.indexOf("/watch2") === -1
+        ) {
+            return "";
+        }
+
+        const watchMatch =
+            normalized.match(
+                /(?:https?:\/\/franime\.fr)?\/watch2\/?\?[^"'<>\\\s]+/i
+            );
+
+        const watchUrl =
+            watchMatch && watchMatch[0]
+                ? watchMatch[0]
+                : normalized;
+
         const match =
-            value.match(/[?&]b=([^&]+)/);
+            watchUrl.match(/[?&]b=([^&"'<>\\\s]+)/i);
 
         if (
             !match ||
             !match[1]
         ) {
+            console.log(
+                "[FRANIME] Watch2 found but b parameter missing:",
+                watchUrl.substring(0, 300)
+            );
+
             return "";
         }
 
+        console.log(
+            "[FRANIME] Watch2 b found, length:",
+            match[1].length
+        );
+
         const embed =
             this.decodeFranimeEmbed(
-            match[1]
-        );
+                match[1]
+            );
 
         if (
             !embed
         ) {
             console.log(
-                "[FRANIME] Watch2 b decode failed"
+                "[FRANIME] Watch2 b decode failed:",
+                match[1].substring(0, 120)
             );
+
+            return "";
         }
+
+        console.log(
+            "[FRANIME] Watch2 decoded embed:",
+            embed
+        );
 
         return embed;
     }
@@ -913,6 +1023,15 @@ class Provider {
             const text =
                 await response.text();
 
+            console.log(
+                "[FRANIME] Lecteur response:",
+                server,
+                "length=",
+                text.length,
+                "preview=",
+                text.substring(0, 500)
+            );
+
             if (
                 !response.ok
             ) {
@@ -1025,6 +1144,18 @@ class Provider {
                 this.extractIframeUrl(
                     text
                 );
+
+            if (
+                iframeUrl &&
+                iframeUrl.indexOf("/watch2") !== -1
+            ) {
+                console.log(
+                    "[FRANIME] Skipping undecoded watch2 iframe:",
+                    iframeUrl.substring(0, 300)
+                );
+
+                continue;
+            }
 
             if (
                 !iframeUrl
