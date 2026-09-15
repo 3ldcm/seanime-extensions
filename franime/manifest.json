@@ -1,0 +1,12 @@
+{
+    "id": "franime-online-streaming",
+    "name": "FRAnime",
+    "version": "0.1.0",
+    "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/franime/manifest.json",
+    "language": "typescript",
+    "type": "onlinestream-provider",
+    "description": "FRAnime provider experimental pour Seanime",
+    "author": "LdCm",
+    "lang": "fr",
+    "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/franime/payload.ts"
+}
