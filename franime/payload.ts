@@ -52,6 +52,9 @@ class Provider {
     readonly SITE_URL = "https://franime.fr";
     readonly SITE_REFERER = "https://franime.fr/anime/watch";
 
+    private animeCache: FranimeAnime[] | null = null;
+    private animeCacheTime = 0;
+
     private readonly SUPPORTED_SERVERS = [
         "sibnet",
         "sendvid",
@@ -693,6 +696,16 @@ class Provider {
     }
 
     private async fetchAnimes(): Promise<FranimeAnime[]> {
+        const now =
+            Date.now();
+
+        if (
+            this.animeCache &&
+            now - this.animeCacheTime < 5 * 60 * 1000
+        ) {
+            return this.animeCache;
+        }
+
         const response =
             await this.apiFetch(
                 "animes"
@@ -706,10 +719,19 @@ class Provider {
                 response.status
             );
 
-            return [];
+            return this.animeCache || [];
         }
 
-        return await response.json();
+        const data =
+            await response.json();
+
+        this.animeCache =
+            data;
+
+        this.animeCacheTime =
+            now;
+
+        return data;
     }
 
     async search(
