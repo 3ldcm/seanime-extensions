@@ -952,26 +952,38 @@ class Provider {
         return candidates
             .slice(0, 10)
             .map(
-                item => ({
-                    id:
-                        this.encodeAnimeId(
+                item => {
+                    console.log(
+                        "[FRANIME] Matching:",
+                        "wanted=",
+                        opts.query,
+                        "selected=",
+                        item.anime.title,
+                        "id=",
+                        item.anime.id
+                    );
+
+                    return {
+                        id:
+                            this.encodeAnimeId(
+                                String(item.anime.id),
+                                opts.dub
+                                    ? "vf"
+                                    : "vo"
+                            ),
+                        title:
+                            item.anime.title ||
+                            item.anime.titleO ||
                             String(item.anime.id),
+                        url:
+                            "https://franime.fr/anime/" +
+                            String(item.anime.id),
+                        subOrDub:
                             opts.dub
-                                ? "vf"
-                                : "vo"
-                        ),
-                    title:
-                        item.anime.title ||
-                        item.anime.titleO ||
-                        String(item.anime.id),
-                    url:
-                        "https://franime.fr/anime/" +
-                        String(item.anime.id),
-                    subOrDub:
-                        opts.dub
-                            ? "dub"
-                            : "sub"
-                })
+                                ? "dub"
+                                : "sub"
+                    };
+                }
             );
     }
 
