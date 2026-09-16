@@ -969,6 +969,11 @@ class Provider {
             EpisodeDetails[] =
                 [];
 
+        console.log(
+            "[FRANIME] Seasons:",
+            anime.saisons.length
+        );
+
         for (
             let seasonIndex = 0;
             seasonIndex < anime.saisons.length;
@@ -976,6 +981,17 @@ class Provider {
         ) {
             const season =
                 anime.saisons[seasonIndex];
+
+            console.log(
+                "[FRANIME] Season:",
+                seasonIndex,
+                "title=",
+                season.title || "",
+                "episodes=",
+                season.episodes
+                    ? season.episodes.length
+                    : 0
+            );
 
             const seasonNumber =
                 seasonIndex + 1;

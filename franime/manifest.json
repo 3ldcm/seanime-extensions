@@ -1,7 +1,7 @@
 {
     "id": "franime-online-streaming",
     "name": "FRAnime",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/franime/manifest.json",
     "language": "typescript",
     "type": "onlinestream-provider",
