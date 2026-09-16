@@ -213,6 +213,31 @@ class Provider {
         return bestScore;
     }
 
+    private hasExactTitleMatch(
+        query: string,
+        anime: FranimeAnime
+    ): boolean {
+        const normalizedQuery =
+            this.normalizeTitle(query);
+
+        if (!normalizedQuery) {
+            return false;
+        }
+
+        const titles =
+            this.getAllTitles(anime);
+
+        for (const title of titles) {
+            if (
+                this.normalizeTitle(title) === normalizedQuery
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private parseEpisodeNumber(
         title: string,
         fallback: number
@@ -910,7 +935,21 @@ class Provider {
                 b.score - a.score
         );
 
-        return results
+        const exactResults =
+            results.filter(
+                item =>
+                    this.hasExactTitleMatch(
+                        opts.query,
+                        item.anime
+                    )
+            );
+
+        const candidates =
+            exactResults.length > 0
+                ? exactResults
+                : results;
+
+        return candidates
             .slice(0, 10)
             .map(
                 item => ({
