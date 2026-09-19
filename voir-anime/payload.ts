@@ -411,10 +411,227 @@ class Provider {
         );
     }
 
-    private extractVideoSourcesFromHtml(
+    private resolvePlaylistUrl(
+        rawUrl: string,
+        playlistUrl: string
+    ): string {
+        try {
+            return new URL(
+                rawUrl,
+                playlistUrl
+            ).toString();
+        } catch (_err) {
+            return rawUrl;
+        }
+    }
+
+    private async logHlsManifestDiagnostics(
+        manifestUrl: string,
+        iframeUrl: string
+    ): Promise<void> {
+        try {
+            const referer =
+                new URL(
+                    iframeUrl
+                ).origin + "/";
+
+            const response =
+                await this.proxyFetch(
+                    manifestUrl,
+                    {
+                        Referer:
+                            referer,
+                        Origin:
+                            new URL(
+                                iframeUrl
+                            ).origin
+                    }
+                );
+
+            console.log(
+                "[VOIRANIME] HLS manifest probe:",
+                response.status,
+                manifestUrl
+            );
+
+            if (
+                !response.ok
+            ) {
+                return;
+            }
+
+            const manifest =
+                await response.text();
+
+            const lines =
+                manifest
+                    .split(/\r?\n/)
+                    .map(line => line.trim())
+                    .filter(line => line !== "");
+
+            const variantIndex =
+                lines.findIndex(
+                    line => line.startsWith("#EXT-X-STREAM-INF")
+                );
+
+            if (
+                variantIndex !== -1
+            ) {
+                const variantLine =
+                    lines[variantIndex + 1] || "";
+
+                const variantUrl =
+                    this.resolvePlaylistUrl(
+                        variantLine,
+                        manifestUrl
+                    );
+
+                console.log(
+                    "[VOIRANIME] HLS master playlist variant:",
+                    variantUrl
+                );
+
+                await this.logMediaPlaylistDiagnostics(
+                    variantUrl,
+                    iframeUrl
+                );
+
+                return;
+            }
+
+            this.logMediaPlaylistSummary(
+                manifestUrl,
+                lines
+            );
+
+        } catch (err: any) {
+            console.log(
+                "[VOIRANIME] HLS manifest probe failed:",
+                err &&
+                err.message
+                    ? err.message
+                    : String(err)
+            );
+        }
+    }
+
+    private async logMediaPlaylistDiagnostics(
+        playlistUrl: string,
+        iframeUrl: string
+    ): Promise<void> {
+        try {
+            const origin =
+                new URL(
+                    iframeUrl
+                ).origin;
+
+            const response =
+                await this.proxyFetch(
+                    playlistUrl,
+                    {
+                        Referer:
+                            origin + "/",
+                        Origin:
+                            origin
+                    }
+                );
+
+            console.log(
+                "[VOIRANIME] HLS media playlist probe:",
+                response.status,
+                playlistUrl
+            );
+
+            if (
+                !response.ok
+            ) {
+                return;
+            }
+
+            const playlist =
+                await response.text();
+
+            const lines =
+                playlist
+                    .split(/\r?\n/)
+                    .map(line => line.trim())
+                    .filter(line => line !== "");
+
+            this.logMediaPlaylistSummary(
+                playlistUrl,
+                lines
+            );
+
+        } catch (err: any) {
+            console.log(
+                "[VOIRANIME] HLS media playlist probe failed:",
+                err &&
+                err.message
+                    ? err.message
+                    : String(err)
+            );
+        }
+    }
+
+    private logMediaPlaylistSummary(
+        playlistUrl: string,
+        lines: string[]
+    ): void {
+        const mediaSequence =
+            lines.find(
+                line => line.startsWith("#EXT-X-MEDIA-SEQUENCE")
+            ) || "";
+
+        const targetDuration =
+            lines.find(
+                line => line.startsWith("#EXT-X-TARGETDURATION")
+            ) || "";
+
+        let segmentCount = 0;
+        let firstDuration = "";
+        let firstSegment = "";
+
+        for (
+            let i = 0;
+            i < lines.length;
+            i++
+        ) {
+            const line =
+                lines[i];
+
+            if (
+                line.startsWith("#EXTINF")
+            ) {
+                segmentCount++;
+
+                if (
+                    !firstDuration
+                ) {
+                    firstDuration =
+                        line;
+                    firstSegment =
+                        lines[i + 1] || "";
+                }
+            }
+        }
+
+        console.log(
+            "[VOIRANIME] HLS media summary:",
+            JSON.stringify({
+                playlistUrl,
+                mediaSequence,
+                targetDuration,
+                segmentCount,
+                firstDuration,
+                firstSegment
+            })
+        );
+    }
+
+    private async extractVideoSourcesFromHtml(
         html: string,
         iframeUrl: string
-    ): VideoSource[] {
+    ): Promise<VideoSource[]> {
         const unescapedHtml =
             html
                 .replace(/\\\//g, "/")
@@ -483,6 +700,20 @@ class Provider {
             "[VOIRANIME] Video candidates:",
             urls.length
         );
+
+        for (
+            const url of urls
+        ) {
+            if (
+                url.toLowerCase()
+                    .includes(".m3u8")
+            ) {
+                await this.logHlsManifestDiagnostics(
+                    url,
+                    iframeUrl
+                );
+            }
+        }
 
         return urls.map(
             url => ({
@@ -940,7 +1171,7 @@ class Provider {
             await iframeResponse.text();
 
         const videoSources =
-            this.extractVideoSourcesFromHtml(
+            await this.extractVideoSourcesFromHtml(
                 iframeHtml,
                 iframeUrl
             );
