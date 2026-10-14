@@ -17,8 +17,14 @@ class Provider {
         "mytv",
         "voe",
         "moon",
-        "stape"
+        "stape",
+        "fhd1"
     ];
+
+    // fhd1 is exposed in the selector but not yet implemented (DASH .mpd not
+    // validated against Seanime 3.10.4 VideoCore). extractVideoSourcesFromHtml
+    // logs "[VOIRANIME][FHD1] Skipped" when invoked for fhd1 and returns no
+    // source, so it never claims to work.
 
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
@@ -433,6 +439,34 @@ class Provider {
             ) {
                 return voeSources;
             }
+        }
+
+        if (
+            server === "stape"
+        ) {
+            const stapeSources =
+                await this.extractStreamtapeSources(
+                    html,
+                    iframeUrl
+                );
+
+            if (
+                stapeSources.length > 0
+            ) {
+                return stapeSources;
+            }
+        }
+
+        if (
+            server === "fhd1"
+        ) {
+            // Spec section 7: FHD1 (Mail.ru / DASH) not implemented yet.
+            // Fall through to generic scanner — it will return no source
+            // and Seanime will fall back to the next candidate. We don't
+            // pretend it works.
+            console.log(
+                "[VOIRANIME][FHD1] Skipped: DASH extractor not implemented"
+            );
         }
 
         const unescapedHtml =
@@ -1038,37 +1072,234 @@ class Provider {
         return videoSources;
     }
 
+    private async extractStreamtapeSources(
+        html: string,
+        iframeUrl: string
+    ): Promise<VideoSource[]> {
+
+        console.log(
+            "[VOIRANIME][STAPE] Starting extraction"
+        );
+
+        if (
+            !html ||
+            html.length < 100
+        ) {
+            console.log(
+                "[VOIRANIME][STAPE] Empty or trivial HTML"
+            );
+            return [];
+        }
+
+        // Streamtape serves a `//streamtape.com/get_video?id=...&token=...&stream=1`
+        // URL whose token is built dynamically by client-side JS using
+        // `document.getElementById('robotlink').innerHTML = ...`. There is also
+        // a decoy `<a id="robotlink">` with a bogus href — ignore it and parse
+        // the script expression instead.
+        const robotLineMatch = html.match(
+            /document\.getElementById\(["']robotlink["']\)\.innerHTML\s*=\s*([^;]+);/i
+        );
+
+        if (!robotLineMatch) {
+            console.log(
+                "[VOIRANIME][STAPE] robotlink expression not found"
+            );
+            return [];
+        }
+
+        const expression =
+            robotLineMatch[1].trim();
+
+        console.log(
+            "[VOIRANIME][STAPE] Embed URL found"
+        );
+
+        // Parse the JS string-literal concatenation without eval().
+        // Each term is either 'literal' or ('literal').substring(N) / .substr(N).
+        const termRegex =
+            /(?:\(\s*)?(['"])([^'"]*)\1(?:\s*\)\s*\.\s*(?:substring|substr)\s*\(\s*(\d+)\s*(?:,\s*\d+\s*)?\))?/g;
+
+        let tokenStr = "";
+        let matchedAny = false;
+
+        let term: RegExpExecArray | null;
+
+        while (
+            (term = termRegex.exec(expression)) !== null
+        ) {
+            matchedAny = true;
+
+            let piece = term[2];
+            const fn = term[3];
+            const arg =
+                term[4] !== undefined
+                    ? parseInt(term[4], 10)
+                    : (
+                        term[3] !== undefined
+                            ? parseInt(term[3], 10)
+                            : null
+                    );
+
+            if (
+                fn &&
+                arg !== null
+            ) {
+                piece = piece.slice(arg);
+            }
+
+            tokenStr += piece;
+        }
+
+        if (
+            !matchedAny ||
+            !tokenStr
+        ) {
+            console.log(
+                "[VOIRANIME][STAPE] Expression parser matched nothing"
+            );
+            return [];
+        }
+
+        let directUrl = tokenStr.trim();
+
+        if (
+            directUrl.startsWith("http")
+        ) {
+            // already absolute
+        } else if (
+            directUrl.startsWith("//")
+        ) {
+            directUrl = "https:" + directUrl;
+        } else if (
+            directUrl.startsWith("streamtape") ||
+            directUrl.indexOf("streamtape") !== -1
+        ) {
+            directUrl =
+                "https://" +
+                directUrl.replace(/^\/+/, "");
+        } else if (
+            directUrl.startsWith("get_video") ||
+            directUrl.startsWith("/get_video")
+        ) {
+            directUrl =
+                "https://streamtape.com/" +
+                directUrl.replace(/^\/+/, "");
+        } else if (
+            directUrl.startsWith("/")
+        ) {
+            // unknown leading '/…', prepend streamtape origin
+            directUrl =
+                "https://streamtape.com" + directUrl;
+        } else {
+            directUrl =
+                "https://streamtape.com/" + directUrl;
+        }
+
+        // Sanitize legacy/recomposed TLDs ('streamtape.cdom', 'streamtape.ccom'…).
+        directUrl = directUrl
+            .replace(
+                /streamtape\.[a-z]*dom/gi,
+                "streamtape.com"
+            )
+            .replace(
+                /streamtape\.c+om/gi,
+                "streamtape.com"
+            );
+
+        if (
+            directUrl.indexOf("&stream=1") === -1 &&
+            directUrl.indexOf("?stream=1") === -1
+        ) {
+            directUrl += "&stream=1";
+        }
+
+        console.log(
+            "[VOIRANIME][STAPE] Video parameters extracted"
+        );
+
+        // Try to resolve the 302 redirect to the actual MP4 on tapecontent.net.
+        // Spec: don't trust proxyFetch().url — try HEAD via redirect:"follow" /
+        // "manual" opportunistically, and don't bail if it isn't supported.
+        let resolvedUrl = directUrl;
+
+        try {
+            const headResponse =
+                await this.proxyFetch(
+                    directUrl,
+                    {
+                        Referer: "https://streamtape.com/",
+                        "User-Agent":
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+                    }
+                );
+
+            // Some proxy layers expose response.url with the final location.
+            const candidateFinal =
+                (headResponse as any).url as
+                    string | undefined;
+
+            if (
+                candidateFinal &&
+                typeof candidateFinal === "string" &&
+                candidateFinal !== directUrl &&
+                (
+                    candidateFinal.indexOf(".mp4") !== -1 ||
+                    candidateFinal.indexOf(".m3u8") !== -1
+                )
+            ) {
+                resolvedUrl = candidateFinal;
+                console.log(
+                    "[VOIRANIME][STAPE] Redirect resolved"
+                );
+            } else {
+                console.log(
+                    "[VOIRANIME][STAPE] Redirect not exposed, using get_video URL"
+                );
+            }
+
+        } catch (error) {
+            console.log(
+                "[VOIRANIME][STAPE] HEAD failed, using get_video URL:",
+                String(error).slice(0, 120)
+            );
+        }
+
+        const lowerUrl =
+            resolvedUrl.toLowerCase();
+
+        const type: VideoSourceType =
+            lowerUrl.indexOf(".m3u8") !== -1
+                ? "m3u8"
+                : "mp4";
+
+        console.log(
+            "[VOIRANIME][STAPE] MP4 source found"
+        );
+
+        return [
+            {
+                url: resolvedUrl,
+                type,
+                quality:
+                    "stape - auto",
+                subtitles: []
+            }
+        ];
+    }
+
     private buildCandidateServers(
         requestedServer: string
     ): string[] {
-        const candidates:
-            string[] = [];
 
         if (
             this.SUPPORTED_SERVERS.indexOf(
                 requestedServer
             ) !== -1
         ) {
-            candidates.push(
-                requestedServer
-            );
+            return [requestedServer];
         }
 
-        for (
-            const server of this.SUPPORTED_SERVERS
-        ) {
-            if (
-                candidates.indexOf(
-                    server
-                ) === -1
-            ) {
-                candidates.push(
-                    server
-                );
-            }
-        }
-
-        return candidates;
+        return ["mytv"];
     }
 
     async search(
@@ -1528,13 +1759,22 @@ class Provider {
                 continue;
             }
 
+            const serverHeaders: Record<string, string> =
+                server === "stape"
+                    ? {
+                        Referer: "https://streamtape.com/",
+                        "User-Agent":
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+                    }
+                    : {
+                        referer:
+                            new URL(
+                                iframeUrl
+                            ).origin + "/"
+                    };
+
             return {
-                headers: {
-                    referer:
-                        new URL(
-                            iframeUrl
-                        ).origin + "/"
-                },
+                headers: serverHeaders,
                 server,
                 videoSources
             };
