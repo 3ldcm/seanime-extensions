@@ -1199,31 +1199,25 @@ class Provider {
             );
         }
 
-        // Find a token (alphanumeric, ~22 chars), hash (alpha, ~14 chars),
-        // and timestamp (10 digits) inside any pipe-array.
+        // The HLS components are consecutive dictionary entries:
+        // <timestamp>|<path hash>|<stream token>. Do not select the
+        // first value matching each shape: packed player code contains
+        // unrelated timestamps and identifiers such as "callistanise"
+        // and "setCurrentAudioTrack".
         let timestamp = "";
         let hash = "";
         let token = "";
 
         for (const arr of pipeArrays) {
-            for (const entry of arr) {
+            for (let i = 0; i + 2 < arr.length; i++) {
                 if (
-                    !timestamp &&
-                    /^\d{10}$/.test(entry)
+                    /^\d{10}$/.test(arr[i]) &&
+                    /^[a-z]{12,16}$/.test(arr[i + 1]) &&
+                    /^[A-Za-z0-9]{18,26}$/.test(arr[i + 2])
                 ) {
-                    timestamp = entry;
-                } else if (
-                    !hash &&
-                    /^[a-z]{12,16}$/.test(entry)
-                ) {
-                    hash = entry;
-                } else if (
-                    !token &&
-                    /^[A-Za-z0-9]{18,26}$/.test(
-                        entry
-                    )
-                ) {
-                    token = entry;
+                    timestamp = arr[i];
+                    hash = arr[i + 1];
+                    token = arr[i + 2];
                 }
             }
         }
@@ -1277,7 +1271,7 @@ class Provider {
                     await fetch(
                         url,
                         {
-                            method: "HEAD"
+                            method: "GET"
                         }
                     );
 
