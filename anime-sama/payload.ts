@@ -36,7 +36,9 @@ class Provider {
     ];
 
     private readonly SUPPORTED_SERVERS = [
-        "sibnet",
+        // "sibnet",  // disabled 2026-10-14: Anime-Sama serves a placeholder
+        //             // short MP4 instead of the real episode. Fix expected
+        //             // in 1-2 months. Re-enable once validated.
         "vk",
         "sendvid",
         "vidmoly",
