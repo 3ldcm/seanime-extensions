@@ -898,6 +898,17 @@ class Provider {
         serverUrl: string
     ): Promise<VideoSource[]> {
 
+        // Callistanise / minochinos / pixibay embedders hide the HLS
+        // master URL behind an obfuscated script whose only side-channel
+        // is a pipe-separated token array embedded in the HTML.
+        if (
+            this._Server === "hlsembed"
+        ) {
+            return this.extractHlsembedSources(
+                serverUrl
+            );
+        }
+
         const req =
             await this.proxyFetch(
                 serverUrl
@@ -1118,6 +1129,181 @@ class Provider {
         }
 
         return videos;
+    }
+
+    // Extract the master.m3u8 URL for the callistanise / minochinos /
+    // pixibay embedder network. The HTML embeds a pipe-separated token
+    // array (e.g. ".../streams/"<token>"/<hash>/<ts>/<file_id>/master.m3u8")
+    // inside an obfuscated script. We extract the candidate components
+    // by their shape (10-digit timestamp, 14-char hash, ~22-char token,
+    // 8-digit file_id from a `$.cookie('file_id', ...)` call), build
+    // candidate URLs, and HEAD-probe to find the live one.
+    private async extractHlsembedSources(
+        serverUrl: string
+    ): Promise<VideoSource[]> {
+
+        console.log(
+            "[HLSEMBED] Fetching",
+            serverUrl
+        );
+
+        const response =
+            await this.proxyFetch(
+                serverUrl
+            );
+
+        if (!response.ok) {
+            console.log(
+                "[HLSEMBED] HTTP",
+                response.status
+            );
+            return [];
+        }
+
+        const html =
+            await response.text();
+
+        // Strip obfuscation escapes so pipe-separated arrays become
+        // easier to find.
+        const unescapedHtml =
+            html
+                .replace(/\\\//g, "/")
+                .replace(/\\u0026/g, "&");
+
+        // Collect all pipe-separated arrays of length 6+. These are
+        // the obfuscator's dictionary lookups.
+        const pipeArrays: string[][] = [];
+
+        const pipeRegex =
+            /["']([^"']*?(?:\w+\|){5,}\w+)["']/g;
+
+        let pm: RegExpExecArray | null;
+
+        while (
+            (pm = pipeRegex.exec(unescapedHtml)) !== null
+        ) {
+            const inner = pm[1];
+
+            // Skip values that contain dots in tokens (usually URLs).
+            if (
+                inner.includes("://") ||
+                inner.includes("/stream/")
+            ) {
+                continue;
+            }
+
+            pipeArrays.push(
+                inner.split("|")
+            );
+        }
+
+        // Find a token (alphanumeric, ~22 chars), hash (alpha, ~14 chars),
+        // and timestamp (10 digits) inside any pipe-array.
+        let timestamp = "";
+        let hash = "";
+        let token = "";
+
+        for (const arr of pipeArrays) {
+            for (const entry of arr) {
+                if (
+                    !timestamp &&
+                    /^\d{10}$/.test(entry)
+                ) {
+                    timestamp = entry;
+                } else if (
+                    !hash &&
+                    /^[a-z]{12,16}$/.test(entry)
+                ) {
+                    hash = entry;
+                } else if (
+                    !token &&
+                    /^[A-Za-z0-9]{18,26}$/.test(
+                        entry
+                    )
+                ) {
+                    token = entry;
+                }
+            }
+        }
+
+        // file_id is in a $.cookie('file_id', 'NNNNNNNN') call.
+        const fileIdMatch = unescapedHtml.match(
+            /\$\.cookie\(\s*['"]file_id['"]\s*,\s*['"](\d{6,12})['"]/
+        );
+        const fileId =
+            fileIdMatch
+                ? fileIdMatch[1]
+                : "";
+
+        console.log(
+            "[HLSEMBED] tokens ts=",
+            timestamp,
+            "hash=",
+            hash,
+            "token=",
+            token,
+            "file_id=",
+            fileId
+        );
+
+        if (
+            !timestamp ||
+            !hash ||
+            !token ||
+            !fileId
+        ) {
+            console.log(
+                "[HLSEMBED] Missing one or more URL components"
+            );
+            return [];
+        }
+
+        // The HLS path follows the pattern observed in HAR:
+        //   /stream/<token>/<hash>/<timestamp>/<file_id>/master.m3u8
+        // Order may vary — we probe both common orderings.
+        const baseUrl = new URL(serverUrl).origin;
+
+        const candidateUrls = [
+            `${baseUrl}/stream/${token}/${hash}/${timestamp}/${fileId}/master.m3u8`,
+            `${baseUrl}/stream/${hash}/${token}/${timestamp}/${fileId}/master.m3u8`,
+            `${baseUrl}/stream/${token}/${hash}/${fileId}/${timestamp}/master.m3u8`
+        ];
+
+        for (const url of candidateUrls) {
+            try {
+                const probe =
+                    await fetch(
+                        url,
+                        {
+                            method: "HEAD"
+                        }
+                    );
+
+                if (probe.ok) {
+                    console.log(
+                        "[HLSEMBED] master.m3u8 found:",
+                        url
+                    );
+                    return [
+                        {
+                            url,
+                            type: "m3u8" as VideoSourceType,
+                            quality:
+                                "hlsembed - auto",
+                            subtitles: []
+                        }
+                    ];
+                }
+            } catch {
+                // try next candidate
+            }
+        }
+
+        console.log(
+            "[HLSEMBED] No live master.m3u8 found"
+        );
+
+        return [];
     }
 
     async search(
