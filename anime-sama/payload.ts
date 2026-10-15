@@ -40,7 +40,8 @@ class Provider {
         //             // short MP4 instead of the real episode. Fix expected
         //             // in 1-2 months. Re-enable once validated.
         "vk",
-        "sendvid",
+        // "sendvid", // disabled: Anime-Sama can return a 5-second placeholder
+        // video which Seanime treats as a valid episode.
         "vidmoly",
         "movearnpre",
         "oneupload",
