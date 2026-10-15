@@ -1254,52 +1254,23 @@ class Provider {
             return [];
         }
 
-        // The HLS path follows the pattern observed in HAR:
-        //   /stream/<token>/<hash>/<timestamp>/<file_id>/master.m3u8
-        // Order may vary — we probe both common orderings.
-        const baseUrl = new URL(serverUrl).origin;
-
-        const candidateUrls = [
-            `${baseUrl}/stream/${token}/${hash}/${timestamp}/${fileId}/master.m3u8`,
-            `${baseUrl}/stream/${hash}/${token}/${timestamp}/${fileId}/master.m3u8`,
-            `${baseUrl}/stream/${token}/${hash}/${fileId}/${timestamp}/master.m3u8`
-        ];
-
-        for (const url of candidateUrls) {
-            try {
-                const probe =
-                    await fetch(
-                        url,
-                        {
-                            method: "GET"
-                        }
-                    );
-
-                if (probe.ok) {
-                    console.log(
-                        "[HLSEMBED] master.m3u8 found:",
-                        url
-                    );
-                    return [
-                        {
-                            url,
-                            type: "m3u8" as VideoSourceType,
-                            quality:
-                                "hlsembed - auto",
-                            subtitles: []
-                        }
-                    ];
-                }
-            } catch {
-                // try next candidate
-            }
-        }
+        const url =
+            `${new URL(serverUrl).origin}/stream/${token}/${hash}/${timestamp}/${fileId}/master.m3u8`;
 
         console.log(
-            "[HLSEMBED] No live master.m3u8 found"
+            "[HLSEMBED] master.m3u8 extracted:",
+            url
         );
 
-        return [];
+        return [
+            {
+                url,
+                type: "m3u8" as VideoSourceType,
+                quality:
+                    "hlsembed - auto",
+                subtitles: []
+            }
+        ];
     }
 
     async search(
