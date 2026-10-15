@@ -79,7 +79,11 @@ class Provider {
         /(?:https?:\/\/|\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
 
     private static readonly ESCAPED_VIDEO_URL_RE =
-        /(?:https?:\\\/\\\/|\\\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
+        /(?:https?:\\\/\/\\\/|\/\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
+
+    // JWPlayer setup({sources: [{file: "URL_HLS"}]})
+    private static readonly JWPLAYER_FILE_RE =
+        /sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+\.(?:m3u8|mp4)(?:\?[^"']*)?)["']/gi;
 
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
@@ -1003,6 +1007,15 @@ class Provider {
                     unescapedSearchSource.match(
                         Provider.VIDEO_URL_RE
                     ) || []
+                ),
+                // JWPlayer setup({sources: [{file: "URL"}]}) pattern
+                ...(
+                    (unescapedSearchSource.match(
+                        Provider.JWPLAYER_FILE_RE
+                    ) || []) as RegExpMatchArray[]
+                ).map(
+                    (m: RegExpMatchArray) =>
+                        m[1] || ""
                 )
             ])
         ];
@@ -1629,3 +1642,4 @@ class Provider {
         };
     }
 }
+
