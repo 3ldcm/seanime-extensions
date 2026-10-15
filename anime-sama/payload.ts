@@ -44,6 +44,7 @@ class Provider {
         "vidmoly",
         "movearnpre",
         "oneupload",
+        "uqload",
         "embed4me",
         "ansembed"
     ];
@@ -193,6 +194,27 @@ class Provider {
                 hostname.endsWith(".ansembed.net")
             ) {
                 return "ansembed";
+            }
+
+            // HLS embedder network (callistanise, minochinos, vidhide, etc.)
+            if (
+                hostname === "callistanise.com" ||
+                hostname.endsWith(".callistanise.com") ||
+                hostname === "minochinos.com" ||
+                hostname.endsWith(".minochinos.com") ||
+                hostname === "pixibay.cc" ||
+                hostname.endsWith(".pixibay.cc")
+            ) {
+                return "hlsembed";
+            }
+
+            if (
+                hostname === "uqload.vc" ||
+                hostname.endsWith(".uqload.vc") ||
+                hostname === "uqload.com" ||
+                hostname.endsWith(".uqload.com")
+            ) {
+                return "uqload";
             }
 
             return hostname
