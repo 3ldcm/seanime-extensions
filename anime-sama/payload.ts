@@ -1100,6 +1100,18 @@ class Provider {
                     `https:${url}`;
             }
 
+            if (
+                !/^https?:\/\//i.test(
+                    finalUrl
+                )
+            ) {
+                console.log(
+                    `[${this._Server.toUpperCase()}] Ignoring invalid video URL:`,
+                    finalUrl
+                );
+                continue;
+            }
+
             const type =
                 finalUrl.includes(
                     ".m3u8"
