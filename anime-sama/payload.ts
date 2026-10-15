@@ -45,6 +45,7 @@ class Provider {
         "movearnpre",
         "oneupload",
         "uqload",
+        "stape",
         "embed4me",
         "ansembed"
     ];
@@ -205,7 +206,7 @@ class Provider {
                 hostname === "pixibay.cc" ||
                 hostname.endsWith(".pixibay.cc")
             ) {
-                return "hlsembed";
+                return "stape";
             }
 
             if (
@@ -902,7 +903,8 @@ class Provider {
         // master URL behind an obfuscated script whose only side-channel
         // is a pipe-separated token array embedded in the HTML.
         if (
-            this._Server === "hlsembed"
+            this._Server === "hlsembed" ||
+            this._Server === "stape"
         ) {
             return this.extractHlsembedSources(
                 serverUrl
