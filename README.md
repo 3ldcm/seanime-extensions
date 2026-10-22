@@ -15,8 +15,16 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama/manif
 
 **Fichiers :**
 - `manifest.json` — Métadonnées extension
-- `provider.js` — Provider fonctionnel (⚠️ à récupérer)
-- `provider-reference.js` — Référence logique corrigée (épisodes par index)
+- `payload.ts` — Provider TypeScript (v2.2.7)
+- `test_parser.js` — Tests du parseur et des lecteurs (31 vérifications, `node test_parser.js`)
+
+**Corrections v2.2.7 :** la liste d'épisodes était vide parce que `episodes.js` répond **403 sans
+`Referer`** — le provider envoie désormais un UA et un Referer dérivé de la cible. Le packer du
+site peut utiliser la **base 62**, que `Number.prototype.toString()` refuse
+(`toString(62)` → exception qui annulait toute l'extraction) : AnsEmbed remonte à nouveau son
+`master.m3u8`. Embed4me passe par son **API + AES-CBC** plutôt que par sa page (délai borné à
+15 s au lieu de 134 s), les faux flux (Big Buck Bunny) et les doublons sont filtrés. Sibnet reste
+désactivé (HTTP 403 quel que soit le Referer).
 
 ### 🎬 Anime-Sama | AnsEmbed (Streaming Provider)
 
