@@ -107,6 +107,10 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/chrome-cast/mani
 
 ## Notes techniques
 
+- **Manifestes :** lancer `python3 check-manifests.py` avant de committer. Seanime refuse
+  l'installation si un manifeste échoue à son « sanity check » (`author` ≤ 25 **octets**,
+  `name` ≤ 50, `id` 3–40 alphanumérique, version semver stricte) et affiche
+  « failed sanity check, extension author is too long ».
 - **Anime-Sama :** reconstruire les épisodes par index de lecteur dans `episodes.js`, ne pas concaténer les tableaux puis renuméroter.
 - **Sibnet :** nécessite le header `Referer: https://video.sibnet.ru` — sans quoi → 403.
 - **Chrome Cast :** privilégier `video.remote.prompt()` (Remote Playback API) plutôt que d'envoyer directement l'URL MP4 Sibnet au Chromecast.

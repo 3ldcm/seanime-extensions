@@ -1,0 +1,31 @@
+{
+    "id": "sushiscan",
+    "name": "SushiScan",
+    "version": "1.0.1",
+    "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/sushiscan/manifest.json",
+    "language": "typescript",
+    "type": "manga-provider",
+    "description": "SushiScan (FR) — User-Agent navigateur toujours envoyé (Cloudflare répond 403 sinon) ; bypass FlareSolverr désormais optionnel",
+    "author": "branrgx — fork LdCm",
+    "icon": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/sushiscan/icon.png",
+    "lang": "fr",
+    "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/sushiscan/main.ts",
+    "userConfig": {
+        "requiresConfig": false,
+        "version": 1,
+        "fields": [
+            {
+                "name": "useProxyBypassSushiScan",
+                "label": "Use proxy cloudflare bypass",
+                "type": "switch",
+                "default": "false"
+            },
+            {
+                "name": "proxyBypassUrlSushiScan",
+                "label": "FlareSolverr Proxy URL",
+                "type": "text",
+                "default": "http://127.0.0.1:8191"
+            }
+        ]
+    }
+}

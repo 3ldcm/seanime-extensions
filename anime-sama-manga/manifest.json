@@ -1,12 +1,12 @@
 {
     "id": "animesamamanga",
     "name": "FR | AnimeSama (Manga)",
-    "version": "2.2.1",
+    "version": "2.2.2",
     "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama-manga/manifest.json",
     "language": "javascript",
     "type": "manga-provider",
-    "description": "Anime Sama (scans/webtoons) — recherche via catalogue/fragment.php, parseur corrigé pour le catalogue 2026-10",
-    "author": "pal & Rafou376 — fork LdCm",
+    "description": "Anime Sama (scans/webtoons) — fork du provider de pal & Rafou376, recherche via catalogue/fragment.php corrigée pour le catalogue 2026-10",
+    "author": "pal, Rafou376, LdCm",
     "icon": "https://raw.githubusercontent.com/pal-droid/seanime-providers/refs/heads/main/public/animesama.png",
     "lang": "fr",
     "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama-manga/provider.js"
