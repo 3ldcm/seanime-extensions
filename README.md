@@ -74,8 +74,9 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/franime/manifest
 
 Provider scans/webtoons Anime-Sama pour Seanime. Fork du provider « AnimeSama (Manga) »
 de pal & Rafou376 (v2.1.0), corrigé pour le catalogue de 2026-10 : la recherche passe
-désormais par `GET /catalogue/fragment.php?search=…` (JSON) au lieu du HTML de
-`/catalogue/?search=…`, qui ne contient plus aucune carte.
+désormais par `GET /catalogue/fragment.php?search=…&type[]=Scans` (JSON) au lieu du
+HTML de `/catalogue/?search=…`, qui ne contient plus aucune carte. Le filtre manga
+`type[]=Scans` est celui du site (il garde les webtoons comme « Infinite Mage »).
 
 **Installation :** Seanime → Extensions → Add extensions → coller l'URL :
 ```

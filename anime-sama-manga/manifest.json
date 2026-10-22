@@ -1,7 +1,7 @@
 {
     "id": "animesamamanga",
     "name": "FR | AnimeSama (Manga)",
-    "version": "2.2.0",
+    "version": "2.2.1",
     "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama-manga/manifest.json",
     "language": "javascript",
     "type": "manga-provider",

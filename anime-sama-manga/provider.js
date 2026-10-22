@@ -6,11 +6,13 @@
  *
  *  - the catalogue page no longer renders results server side, so parsing
  *    /catalogue/?search=… always yields zero cards. The live search is now
- *    served by GET /catalogue/fragment.php?search=… which returns
+ *    served by GET /catalogue/fragment.php?search=…&type[]=Scans which returns
  *    JSON { liste, pagination, total }; `liste` holds the card HTML.
- *  - cards are now <div class="as-carte …" data-url/data-nom/data-img> with
- *    badges <span class="as-badge as-badge-scan|webtoon">. The old
- *    <p class="info-value">Types</p> field that used to list "Scans" is gone.
+ *  - cards are now <div class="as-carte …" data-url/data-nom/data-img>.
+ *    `type[]=Scans` is the site's own manga filter (verified: it keeps
+ *    webtoon-only works such as "Infinite Mage" and drops anime-only ones),
+ *    so no client-side badge heuristic is applied — a renamed badge would
+ *    silently drop results, extra noise is the safer failure mode.
  *
  * Chapter discovery is unchanged by the redesign: /catalogue/<slug>/ declares
  * its scan panels through panneauScan("<label>", "<scan path>"), the scan
@@ -21,11 +23,6 @@
 class Provider {
     api = 'https://anime-sama.to'
     s2 = 'https://anime-sama.to/s2/scans'
-
-    // A card is kept only when it advertises manga content. `webtoon` matters:
-    // anime-sama tags pure webtoons with as-badge-webtoon (no as-badge-scan)
-    // while still serving real scan chapters (e.g. "Infinite Mage").
-    mangaBadge = /as-badge-(?:scan|webtoon)\b/i
 
     getSettings() {
         return {
@@ -53,7 +50,7 @@ class Provider {
         const query = String(opts?.query ?? '').trim()
         if (!query) return []
 
-        const url = `${this.api}/catalogue/fragment.php?search=${encodeURIComponent(query)}`
+        const url = `${this.api}/catalogue/fragment.php?search=${encodeURIComponent(query)}&type%5B%5D=Scans`
 
         try {
             const response = await fetch(url, {
@@ -84,7 +81,8 @@ class Provider {
 
     /**
      * Parses the card HTML returned in fragment.php's `liste` field.
-     * Card shape (2026-10):
+     * The payload is already restricted to manga works by `type[]=Scans`, so
+     * every card is kept here. Card shape (2026-10):
      *   <div class="as-carte as-carte-oeuvre" data-url="/catalogue/<slug>/"
      *        data-cat="oeuvre" data-nom="<raw title>" data-img="<cover>">
      *     <a class="as-carte-lien" href="https://anime-sama.to/catalogue/<slug>">
@@ -107,8 +105,6 @@ class Provider {
         for (let i = 0; i < starts.length; i++) {
             const end = i + 1 < starts.length ? starts[i + 1].start : source.length
             const card = source.slice(starts[i].start, end)
-
-            if (!this.mangaBadge.test(card)) continue
 
             const attr = (name) => {
                 const m = starts[i].tag.match(new RegExp(`${name}=["']([^"']*)["']`, 'i'))
