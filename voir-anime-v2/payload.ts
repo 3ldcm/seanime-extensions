@@ -15,16 +15,29 @@ class Provider {
 
     private readonly SUPPORTED_SERVERS = [
         "mytv",
-        "voe",
-        "moon",
-        "stape",
-        "fhd1"
+        "stape"
     ];
 
-    // fhd1 is exposed in the selector but not yet implemented (DASH .mpd not
-    // validated against Seanime 3.10.4 VideoCore). extractVideoSourcesFromHtml
-    // logs "[VOIRANIME][FHD1] Skipped" when invoked for fhd1 and returns no
-    // source, so it never claims to work.
+    // The site advertises six players; only these two can return a source today.
+    // The others are kept out of SUPPORTED_SERVERS on purpose — Seanime shows
+    // every advertised server in its picker, and a server that can never return
+    // a source is worse than an absent one. Their code paths and logs stay, so
+    // they can be re-enabled as soon as an extractor exists:
+    //
+    //  - "voe" (voe.sx -> rotating mirror, e.g. derricknationtop.com): the embed
+    //    URL only answers a 751-byte JS-redirect stub; the mirror page holds no
+    //    m3u8/mp4 in its HTML (checked on 3 episodes) and builds the source from
+    //    an obfuscated JSON blob + a DOM-dependent loader. Also present on the
+    //    mirror: a Big_Buck_Bunny sample URL, which addVideoUrl now rejects.
+    //  - "moon" (mfw09.org and mirrors): React SPA + fingerprint/AES-GCM
+    //    handshake, the m3u8 is built client-side. See the Seanime skill
+    //    reference `moon-byse-mfw09.md` — needs a HAR holding the embed
+    //    <script> body.
+    //  - "fhd1" ("LECTEUR FHD1" -> my.mail.ru/video/embed/...): HTTP 404 on all
+    //    five episodes tested on 2026-10-22; no Mail.ru/DASH extractor written.
+    //  - "sb" ("LECTEUR SB" -> streamhide.to/e/...): the host refused every
+    //    non-browser TLS handshake from the test machine, so nothing could be
+    //    verified (parseChapterSources skips it rather than faking success).
 
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
@@ -285,6 +298,154 @@ class Provider {
             .replace(/\s+/g, "-");
     }
 
+    /**
+     * Target of a browser-side redirect: `window.location.href = "..."`,
+     * `location.replace("...")` or a `<meta http-equiv="refresh">` tag.
+     */
+    private extractJsRedirectTarget(
+        html: string
+    ): string {
+        const patterns = [
+            /window\.location\.href\s*=\s*["']([^"']+)["']/i,
+            /window\.location\.replace\(\s*["']([^"']+)["']\s*\)/i,
+            /location\.href\s*=\s*["']([^"']+)["']/i,
+            /location\.replace\(\s*["']([^"']+)["']\s*\)/i,
+            /<meta[^>]+http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"'\s>]+)/i
+        ];
+
+        for (
+            const pattern of patterns
+        ) {
+            const match =
+                html.match(pattern);
+
+            if (
+                match &&
+                match[1]
+            ) {
+                return match[1].replace(/\\\//g, "/");
+            }
+        }
+
+        return "";
+    }
+
+    /**
+     * Hosts such as VOE rotate their domain: the embed URL answers with a stub
+     * whose only job is a JS redirect (voe.sx -> derricknationtop.com), and the
+     * player markup exists only on the mirror. Follow it (2 hops max) and return
+     * the final page + URL, so the caller can both extract from it and use its
+     * origin as Referer. Returns null when there is nothing worth following.
+     *
+     * Only redirects pointing at another embed page (`/e/<id>`, `/embed…`) are
+     * followed — those stubs also emit ad/consent redirects that would otherwise
+     * burn the request budget for nothing.
+     */
+    private async resolveJsRedirect(
+        html: string,
+        iframeUrl: string
+    ): Promise<{ html: string, url: string } | null> {
+        let currentHtml =
+            html;
+
+        let currentUrl =
+            iframeUrl;
+
+        let followed =
+            false;
+
+        for (
+            let hop = 0;
+            hop < 2;
+            hop++
+        ) {
+            const target =
+                this.extractJsRedirectTarget(
+                    currentHtml
+                );
+
+            if (
+                !target
+            ) {
+                break;
+            }
+
+            let targetUrl:
+                URL;
+
+            try {
+                targetUrl =
+                    new URL(
+                        this.absoluteUrl(
+                            target
+                        )
+                    );
+            } catch (error) {
+                break;
+            }
+
+            if (
+                targetUrl.href === currentUrl
+            ) {
+                break;
+            }
+
+            const path =
+                targetUrl.pathname
+                    .toLowerCase();
+
+            if (
+                path.indexOf("/e/") === -1 &&
+                path.indexOf("embed") === -1
+            ) {
+                break;
+            }
+
+            try {
+                const response =
+                    await this.proxyFetch(
+                        targetUrl.href,
+                        {
+                            Referer:
+                                this.BASE_URL + "/"
+                        }
+                    );
+
+                if (
+                    !response.ok
+                ) {
+                    break;
+                }
+
+                currentHtml =
+                    await response.text();
+
+                currentUrl =
+                    targetUrl.href;
+
+                followed =
+                    true;
+
+            } catch (error) {
+                console.log(
+                    "[VOIRANIME] JS redirect fetch failed:",
+                    error
+                );
+
+                break;
+            }
+        }
+
+        return followed
+            ? {
+                html:
+                    currentHtml,
+                url:
+                    currentUrl
+            }
+            : null;
+    }
+
     private extractIframeSrc(
         html: string
     ): string {
@@ -407,6 +568,12 @@ class Provider {
             ) ||
             lowerUrl.includes("thumbnail") ||
             lowerUrl.includes("_p.jpg") ||
+            // Decoys: player pages embed royalty-free test clips (the VOE mirror
+            // carries test-videos.co.uk/Big_Buck_Bunny). Handing one to Seanime
+            // looks like a success while playing a 10-second sample.
+            lowerUrl.includes("test-videos.co.uk") ||
+            lowerUrl.includes("bigbuckbunny") ||
+            lowerUrl.includes("sample-videos") ||
             seen[cleanedUrl]
         ) {
             return;
@@ -460,12 +627,27 @@ class Provider {
         if (
             server === "fhd1"
         ) {
-            // Spec section 7: FHD1 (Mail.ru / DASH) not implemented yet.
-            // Fall through to generic scanner — it will return no source
-            // and Seanime will fall back to the next candidate. We don't
-            // pretend it works.
+            // "LECTEUR FHD1" (my.mail.ru) answers 404 on every episode tested
+            // and the Mail.ru/DASH extractor was never written, so fhd1 is no
+            // longer advertised in SUPPORTED_SERVERS. The branch is kept (and
+            // reachable through the "mytv" fallback path) so the reason shows up
+            // in the logs instead of a silent "no source".
             console.log(
-                "[VOIRANIME][FHD1] Skipped: DASH extractor not implemented"
+                "[VOIRANIME][FHD1] Skipped: Mail.ru embed returns 404, extractor not implemented"
+            );
+        }
+
+        if (
+            server === "moon"
+        ) {
+            // "LECTEUR MOON" (mfw09.org and mirrors) is a React SPA: the embed
+            // URL returns a ~1.6 KB shell whose JS requests a fingerprint /
+            // AES-GCM handshake (POST /api/videos/<id>/embed/view -> 204) and
+            // builds the m3u8 client-side, so the page never contains a URL for
+            // a regex scanner to find. Nothing honest to return until that
+            // handshake is ported (needs a HAR with the embed <script> body).
+            console.log(
+                "[VOIRANIME][MOON] Handshake not implemented: SPA builds the m3u8 client-side, no source returned"
             );
         }
 
@@ -899,25 +1081,61 @@ class Provider {
                     ? globalThis
                     : window;
 
-        globalTarget.window =
-            window;
-        globalTarget.document =
-            document;
-        globalTarget.navigator =
-            window.navigator;
-        globalTarget.location =
-            location;
-        globalTarget.localStorage =
-            localStorage;
-        globalTarget.jwplayer =
-            jwplayer;
-        globalTarget.self =
-            window;
-        globalTarget.top =
-            window;
-        globalTarget.parent =
-            window.parent;
-        globalTarget.$ =
+        // Assign each sandbox global defensively: a host that defines one of
+        // them as a getter-only property (Node does for `navigator`) makes a
+        // bare assignment throw, and a throw here aborted the whole extraction
+        // for that server.
+        const assignStub =
+            function (key: string, value: any) {
+                try {
+                    globalTarget[key] =
+                        value;
+                } catch (error) {
+                    console.log(
+                        "[VOIRANIME] VOE stub: cannot set global",
+                        key
+                    );
+                }
+            };
+
+        assignStub(
+            "window",
+            window
+        );
+        assignStub(
+            "document",
+            document
+        );
+        assignStub(
+            "navigator",
+            window.navigator
+        );
+        assignStub(
+            "location",
+            location
+        );
+        assignStub(
+            "localStorage",
+            localStorage
+        );
+        assignStub(
+            "jwplayer",
+            jwplayer
+        );
+        assignStub(
+            "self",
+            window
+        );
+        assignStub(
+            "top",
+            window
+        );
+        assignStub(
+            "parent",
+            window.parent
+        );
+        assignStub(
+            "$",
             function () {
                 return {
                     detach:
@@ -933,7 +1151,8 @@ class Provider {
                             return this;
                         }
                 };
-            };
+            }
+        );
 
         const setTimeout =
             window.setTimeout;
@@ -944,32 +1163,45 @@ class Provider {
         const clearInterval =
             window.clearInterval;
 
-        try {
-            for (
-                const script of externalScripts
-            ) {
-                eval(script);
-            }
+        // Evaluate each script in the global (sloppy-mode) scope. A direct `eval`
+        // inside a class body inherits strict mode, and the player loaders use
+        // `delete` on bare identifiers — a SyntaxError that aborted the whole
+        // extraction. `new Function` runs in script mode and still sees the
+        // stubs published on globalThis just above.
+        const runScript =
+            function (source: string) {
+                try {
+                    const fn =
+                        new Function(source);
 
-            for (
-                const script of scripts
-            ) {
-                if (
-                    script.indexOf(
-                        "import("
-                    ) !== -1
-                ) {
-                    continue;
+                    fn();
+
+                } catch (error) {
+                    console.log(
+                        "[VOIRANIME] VOE script eval failed:",
+                        error
+                    );
                 }
+            };
 
-                eval(script);
+        for (
+            const script of externalScripts
+        ) {
+            runScript(script);
+        }
+
+        for (
+            const script of scripts
+        ) {
+            if (
+                script.indexOf(
+                    "import("
+                ) !== -1
+            ) {
+                continue;
             }
 
-        } catch (error) {
-            console.log(
-                "[VOIRANIME] VOE eval failed:",
-                error
-            );
+            runScript(script);
         }
 
         const urls:
@@ -1072,6 +1304,88 @@ class Provider {
         return videoSources;
     }
 
+    /**
+     * Collects the `document.getElementById('<id>link').innerHTML = <expr>;`
+     * assignments, most trustworthy element first: `robotlink` and `botlink`
+     * carry the real token (with the same token when both are present), while
+     * `ideoolink` is planted as a decoy whose chain resolves to a broken path.
+     */
+    private collectStreamtapeExpressions(
+        html: string
+    ): string[] {
+        const expressions: string[] = [];
+
+        for (
+            const elementId of ["robotlink", "botlink"]
+        ) {
+            const lineRegex =
+                new RegExp(
+                    "document\\.getElementById\\(\\s*[\"']" +
+                    elementId +
+                    "[\"']\\s*\\)\\.innerHTML\\s*=\\s*([^;]+);",
+                    "i"
+                );
+
+            const lineMatch =
+                html.match(lineRegex);
+
+            if (
+                lineMatch &&
+                lineMatch[1]
+            ) {
+                expressions.push(
+                    lineMatch[1].trim()
+                );
+            }
+        }
+
+        return expressions;
+    }
+
+    /**
+     * Evaluates a page-supplied string expression the way a browser would:
+     *   '//streamtape.com/'+ ('xcdget_video?id=…&token=…p').substring(2).substring(1)
+     * The expression is first checked to contain nothing but quoted literals,
+     * '+', parentheses and .substring()/.substr() calls with numeric arguments —
+     * identifiers and property chains are refused, so no page-controlled code
+     * can run.
+     */
+    private evaluateStringExpression(
+        expression: string
+    ): string {
+        const allowed =
+            /^(?:\s*(?:['"][^'"]*['"]|\(\s*(?:['"][^'"]*['"]\s*\+?\s*)+\)|\.\s*(?:substring|substr)\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\)|\+)\s*)+$/;
+
+        if (
+            !allowed.test(expression)
+        ) {
+            console.log(
+                "[VOIRANIME][STAPE] Expression refused: unexpected tokens"
+            );
+
+            return "";
+        }
+
+        try {
+            const value =
+                new Function(
+                    "return (" + expression + ");"
+                )();
+
+            return typeof value === "string"
+                ? value
+                : "";
+
+        } catch (error) {
+            console.log(
+                "[VOIRANIME][STAPE] Expression evaluation failed:",
+                String(error).slice(0, 120)
+            );
+
+            return "";
+        }
+    }
+
     private async extractStreamtapeSources(
         html: string,
         iframeUrl: string
@@ -1091,76 +1405,53 @@ class Provider {
             return [];
         }
 
-        // Streamtape serves a `//streamtape.com/get_video?id=...&token=...&stream=1`
-        // URL whose token is built dynamically by client-side JS using
-        // `document.getElementById('robotlink').innerHTML = ...`. There is also
-        // a decoy `<a id="robotlink">` with a bogus href — ignore it and parse
-        // the script expression instead.
-        const robotLineMatch = html.match(
-            /document\.getElementById\(["']robotlink["']\)\.innerHTML\s*=\s*([^;]+);/i
-        );
+        // Streamtape builds its file URL in a script assignment such as
+        //   document.getElementById('robotlink').innerHTML =
+        //     '//streamtape.com/'+ ('xcdget_video?id=…&token=…p').substring(2).substring(1)
+        // Neither the element that carries the real link (robotlink or botlink —
+        // ideoolink holds decoys) nor the splitting chain is stable: the literal
+        // carries a random junk prefix and the number of chained .substring()
+        // calls changes on every page load. Applying only the first .substring()
+        // — what this parser used to do — produced 'dget_video' (HTTP 404) or a
+        // bogus host such as 'stredamtape.com' (DNS failure on tapecontent.net),
+        // so the expression is now evaluated exactly as a browser would.
+        const expressions =
+            this.collectStreamtapeExpressions(html);
 
-        if (!robotLineMatch) {
+        if (!expressions.length) {
             console.log(
-                "[VOIRANIME][STAPE] robotlink expression not found"
+                "[VOIRANIME][STAPE] No usable innerHTML assignment found"
             );
             return [];
         }
 
-        const expression =
-            robotLineMatch[1].trim();
+        const seenValues: string[] = [];
 
-        console.log(
-            "[VOIRANIME][STAPE] Embed URL found"
-        );
-
-        // Parse the JS string-literal concatenation without eval().
-        // Each term is either 'literal' or ('literal').substring(N) / .substr(N).
-        const termRegex =
-            /(?:\(\s*)?(['"])([^'"]*)\1(?:\s*\)\s*\.\s*(?:substring|substr)\s*\(\s*(\d+)\s*(?:,\s*\d+\s*)?\))?/g;
-
-        let tokenStr = "";
-        let matchedAny = false;
-
-        let term: RegExpExecArray | null;
-
-        while (
-            (term = termRegex.exec(expression)) !== null
-        ) {
-            matchedAny = true;
-
-            let piece = term[2];
-            const fn = term[3];
-            const arg =
-                term[4] !== undefined
-                    ? parseInt(term[4], 10)
-                    : (
-                        term[3] !== undefined
-                            ? parseInt(term[3], 10)
-                            : null
-                    );
+        for (const expression of expressions) {
+            const value =
+                this.evaluateStringExpression(expression);
 
             if (
-                fn &&
-                arg !== null
+                value &&
+                seenValues.indexOf(value) === -1
             ) {
-                piece = piece.slice(arg);
+                seenValues.push(value);
             }
-
-            tokenStr += piece;
         }
 
-        if (
-            !matchedAny ||
-            !tokenStr
-        ) {
+        if (!seenValues.length) {
             console.log(
                 "[VOIRANIME][STAPE] Expression parser matched nothing"
             );
             return [];
         }
 
-        let directUrl = tokenStr.trim();
+        console.log(
+            "[VOIRANIME][STAPE] Candidate URL(s):",
+            seenValues.length
+        );
+
+        let directUrl = seenValues[0].trim();
 
         if (
             directUrl.startsWith("http")
@@ -1738,13 +2029,42 @@ class Provider {
                 continue;
             }
 
-            const iframeHtml =
+            let iframeHtml =
                 await iframeResponse.text();
+
+            let resolvedIframeUrl =
+                iframeUrl;
+
+            // Some hosts answer their embed URL with a stub whose only job is a
+            // JS redirect to a rotating mirror domain (VOE: voe.sx ->
+            // derricknationtop.com). The player markup exists only on the
+            // mirror, so follow it before extracting.
+            const redirected =
+                await this.resolveJsRedirect(
+                    iframeHtml,
+                    iframeUrl
+                );
+
+            if (
+                redirected
+            ) {
+                iframeHtml =
+                    redirected.html;
+
+                resolvedIframeUrl =
+                    redirected.url;
+
+                console.log(
+                    "[VOIRANIME] Followed JS redirect:",
+                    server,
+                    resolvedIframeUrl
+                );
+            }
 
             const videoSources =
                 await this.extractVideoSourcesFromHtml(
                     iframeHtml,
-                    iframeUrl,
+                    resolvedIframeUrl,
                     server
                 );
 
@@ -1769,7 +2089,7 @@ class Provider {
                     : {
                         referer:
                             new URL(
-                                iframeUrl
+                                resolvedIframeUrl
                             ).origin + "/"
                     };
 
