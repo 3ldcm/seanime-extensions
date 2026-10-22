@@ -81,6 +81,12 @@ class Provider {
     private static readonly VIDEO_URL_RE =
         /(?:https?:\/\/|\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
 
+    // `//host/path.m3u8` — VIDEO_URL_RE captures only the tail after the first
+    // slash, and the loop would then re-root it on the *embed* host, inventing a
+    // URL that does not exist. Matched separately and normalised to https://.
+    private static readonly PROTOCOL_RELATIVE_VIDEO_URL_RE =
+        /\/\/[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
+
     private static readonly ESCAPED_VIDEO_URL_RE =
         /(?:https?:\\\/\/\\\/|\/\/)[^\s'"]+\.(?:m3u8|mp4)(?:\?[^\s'"]*)?/g;
 
@@ -90,6 +96,13 @@ class Provider {
 
     private static readonly QUERY_SPLIT_RE =
         /[\s:']+/;
+
+    // Sample clips some embedders ship alongside the real stream (test mirrors
+    // embed Big Buck Bunny). Seanime would "play" 10 s of it and call the
+    // extraction a success, so they are dropped — same rule the download tool
+    // applies in its ansembed/vidhide extractors.
+    private static readonly DECOY_VIDEO_RE =
+        /test-videos\.co\.uk|bigbuckbunny|sample-videos/i;
 
     _Server = "";
 
@@ -106,9 +119,69 @@ class Provider {
      * Ça évite le 401 UNAUTHENTICATED sur le LXC.
      */
     private proxyFetch(
-        targetUrl: string
+        targetUrl: string,
+        timeoutSeconds?: number,
+        referer?: string
     ): Promise<Response> {
-        return fetch(targetUrl);
+        const init:
+            any = {
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+                    Referer:
+                        referer || this.deriveReferer(targetUrl)
+                }
+            };
+
+        if (
+            timeoutSeconds &&
+            timeoutSeconds > 0
+        ) {
+            // Seanime honours `timeout` (in seconds) in its fetch options; the
+            // standard AbortSignal covers the same ground outside the sandbox.
+            // Without a cap, an unresponsive embed host leaves the user staring
+            // at a spinner for minutes.
+            init.timeout =
+                timeoutSeconds;
+
+            if (
+                typeof AbortSignal !== "undefined" &&
+                typeof (AbortSignal as any).timeout === "function"
+            ) {
+                init.signal =
+                    (AbortSignal as any).timeout(
+                        timeoutSeconds * 1000
+                    );
+            }
+        }
+
+        return fetch(
+            targetUrl,
+            init
+        );
+    }
+
+    /**
+     * anime-sama serves its assets only when a Referer is present: episodes.js
+     * answers HTTP 403 without one, which silently emptied the whole episode
+     * list (findEpisodes returned []). Embed hosts expect a Referer too, usually
+     * their own origin. Derive it from the target URL: the directory the file
+     * lives in, which for `<season>/episodes.js` is exactly the season page a
+     * browser would send.
+     */
+    private deriveReferer(
+        targetUrl: string
+    ): string {
+        try {
+            const url =
+                new URL(targetUrl);
+
+            return url.origin +
+                url.pathname.replace(/\/[^/]*$/, "/");
+
+        } catch (error) {
+            return this.BASE_URL + "/";
+        }
     }
 
     private stripComments(
@@ -896,6 +969,285 @@ class Provider {
         }
     }
 
+    /**
+     * Embed4me hides its stream behind an API call and an AES-CBC payload:
+     *   GET https://lpayer.embed4me.com/api/v1/video?id=<id>&w=1920&h=1080&r=<origin>
+     *   → a hex string, decrypted with AES-CBC(key, iv) into
+     *   {"cfNative": "<m3u8>", …} (the two constants are the player's own).
+     * The embed URL carries the id in its fragment (`https://…/#ebsnp`).
+     * The host was unreachable from the machine this was written on, so the
+     * contract is exercised by a unit test against a locally produced
+     * ciphertext rather than a live call. The request is capped with a timeout:
+     * without one, an unresponsive host left the user waiting minutes for
+     * nothing (observed: 134 s, no source).
+     */
+    private async extractEmbed4meSources(
+        serverUrl: string
+    ): Promise<VideoSource[]> {
+
+        const idMatch =
+            serverUrl.match(
+                /#([A-Za-z0-9]+)/
+            ) ||
+            serverUrl.match(
+                /[?&]id=([A-Za-z0-9]+)/
+            );
+
+        if (!idMatch) {
+            console.log(
+                "[ANIMESAMA][EMBED4ME] No video id in",
+                serverUrl
+            );
+
+            return [];
+        }
+
+        const subtle =
+            (globalThis as any).crypto ?
+                (globalThis as any).crypto.subtle :
+                undefined;
+
+        if (!subtle) {
+            console.log(
+                "[ANIMESAMA][EMBED4ME] crypto.subtle unavailable, cannot decrypt"
+            );
+
+            return [];
+        }
+
+        const apiUrl =
+            "https://lpayer.embed4me.com/api/v1/video?id=" +
+            idMatch[1] +
+            "&w=1920&h=1080&r=" +
+            encodeURIComponent(
+                "https://lpayer.embed4me.com/"
+            );
+
+        let payload: string;
+
+        try {
+            const response =
+                await this.proxyFetch(
+                    apiUrl,
+                    15,
+                    // The player calls its own API from the embed page root.
+                    "https://lpayer.embed4me.com/"
+                );
+
+            if (!response.ok) {
+                console.log(
+                    "[ANIMESAMA][EMBED4ME] API status:",
+                    response.status
+                );
+
+                return [];
+            }
+
+            payload =
+                (await response.text())
+                    .trim()
+                    .replace(
+                        /^"|"$/g,
+                        ""
+                    );
+
+        } catch (error) {
+            console.log(
+                "[ANIMESAMA][EMBED4ME] API unreachable:",
+                String(error).slice(0, 120)
+            );
+
+            return [];
+        }
+
+        const plain =
+            await this.decryptAesCbcHex(
+                payload,
+                "kiemtienmua911ca",
+                "1234567890oiuytr"
+            );
+
+        if (!plain) {
+            return [];
+        }
+
+        let data:
+            any;
+
+        try {
+            data =
+                JSON.parse(plain);
+
+        } catch (error) {
+            console.log(
+                "[ANIMESAMA][EMBED4ME] Decrypted payload is not JSON:",
+                plain.slice(0, 80)
+            );
+
+            return [];
+        }
+
+        const url =
+            data?.cfNative ||
+            data?.cf ||
+            data?.source;
+
+        if (
+            typeof url !== "string" ||
+            url.length === 0
+        ) {
+            console.log(
+                "[ANIMESAMA][EMBED4ME] No stream field in the payload"
+            );
+
+            return [];
+        }
+
+        return [
+            {
+                url,
+                type:
+                    url.includes(".m3u8") ?
+                        "m3u8" as VideoSourceType :
+                        "mp4" as VideoSourceType,
+                quality: "auto",
+                subtitles: []
+            }
+        ];
+    }
+
+    /**
+     * AES-CBC over a hex payload, through Web Crypto. Returns "" on any
+     * failure so the caller can just log and give up.
+     */
+    private async decryptAesCbcHex(
+        hex: string,
+        keyText: string,
+        ivText: string
+    ): Promise<string> {
+
+        const subtle =
+            (globalThis as any).crypto ?
+                (globalThis as any).crypto.subtle :
+                undefined;
+
+        if (!subtle) {
+            return "";
+        }
+
+        const clean =
+            hex.replace(
+                /[^0-9a-fA-F]/g,
+                ""
+            );
+
+        if (
+            clean.length === 0 ||
+            clean.length % 2 !== 0
+        ) {
+            console.log(
+                "[ANIMESAMA][EMBED4ME] Payload is not valid hex"
+            );
+
+            return "";
+        }
+
+        const toBytes =
+            (value: string): Uint8Array => {
+                const bytes =
+                    new Uint8Array(
+                        value.length
+                    );
+
+                for (
+                    let i = 0;
+                    i < value.length;
+                    i++
+                ) {
+                    bytes[i] =
+                        value.charCodeAt(i) & 0xff;
+                }
+
+                return bytes;
+            };
+
+        const cipher =
+            new Uint8Array(
+                clean.length / 2
+            );
+
+        for (
+            let i = 0;
+            i < cipher.length;
+            i++
+        ) {
+            cipher[i] =
+                parseInt(
+                    clean.substring(
+                        i * 2,
+                        i * 2 + 2
+                    ),
+                    16
+                );
+        }
+
+        try {
+            const key =
+                await subtle.importKey(
+                    "raw",
+                    toBytes(keyText),
+                    {
+                        name: "AES-CBC"
+                    },
+                    false,
+                    ["decrypt"]
+                );
+
+            const plainBuffer =
+                await subtle.decrypt(
+                    {
+                        name: "AES-CBC",
+                        iv: toBytes(ivText)
+                    },
+                    key,
+                    cipher
+                );
+
+            const bytes =
+                new Uint8Array(
+                    plainBuffer
+                );
+
+            if (
+                typeof TextDecoder !== "undefined"
+            ) {
+                return new TextDecoder().decode(bytes);
+            }
+
+            // The payload is a JSON of URLs, i.e. ASCII in practice.
+            let out = "";
+
+            for (
+                let i = 0;
+                i < bytes.length;
+                i++
+            ) {
+                out +=
+                    String.fromCharCode(bytes[i]);
+            }
+
+            return out;
+
+        } catch (error) {
+            console.log(
+                "[ANIMESAMA][EMBED4ME] Decrypt failed:",
+                String(error).slice(0, 120)
+            );
+
+            return "";
+        }
+    }
+
     private async HandleServerUrl(
         serverUrl: string
     ): Promise<VideoSource[]> {
@@ -908,6 +1260,16 @@ class Provider {
             this._Server === "stape"
         ) {
             return this.extractHlsembedSources(
+                serverUrl
+            );
+        }
+
+        // Embed4me never exposes the stream in its embed page: the id in the URL
+        // fragment is traded for an AES-CBC payload on an API endpoint.
+        if (
+            this._Server === "embed4me"
+        ) {
+            return this.extractEmbed4meSources(
                 serverUrl
             );
         }
@@ -931,6 +1293,53 @@ class Provider {
         const html =
             await req.text();
 
+        /**
+         * The packer replaces a dictionary index with a word, using the index
+         * written in the dictionary's base. `Number.prototype.toString(radix)`
+         * only accepts 2..36, while packers routinely use base 62 — calling
+         * `c.toString(62)` throws "radix argument must be between 2 and 36" and
+         * that exception aborted the whole extraction (observed live on
+         * ansembed.net, where the m3u8 sits in plain sight in the page).
+         */
+        function encodeBase(
+            number: number,
+            radix: number
+        ): string {
+
+            const alphabet =
+                "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+            if (
+                radix < 2 ||
+                radix > alphabet.length ||
+                !isFinite(number)
+            ) {
+                return String(number);
+            }
+
+            if (
+                number === 0
+            ) {
+                return "0";
+            }
+
+            let result = "";
+            let current = number;
+
+            while (
+                current > 0
+            ) {
+                result =
+                    alphabet[current % radix] +
+                    result;
+
+                current =
+                    Math.floor(current / radix);
+            }
+
+            return result;
+        }
+
         function unpack(
             p: string,
             a: number,
@@ -944,7 +1353,7 @@ class Provider {
                         p.replace(
                             new RegExp(
                                 "\\b" +
-                                c.toString(a) +
+                                encodeBase(c, a) +
                                 "\\b",
                                 "g"
                             ),
@@ -1006,12 +1415,27 @@ class Provider {
                             .split("|");
 
                     unpacked =
-                        unpack(
-                            packed,
-                            base,
-                            count,
-                            dict
-                        );
+                        (() => {
+                            try {
+                                return unpack(
+                                    packed,
+                                    base,
+                                    count,
+                                    dict
+                                );
+
+                            } catch (error) {
+                                // A malformed packer header must not abort the
+                                // extraction: the raw HTML still gets scanned
+                                // below (that is where ansembed keeps its m3u8).
+                                console.log(
+                                    "[ANIMESAMA] Packer unpack failed, scanning raw HTML only:",
+                                    String(error).slice(0, 120)
+                                );
+
+                                return undefined;
+                            }
+                        })();
 
                     break;
                 }
@@ -1044,6 +1468,15 @@ class Provider {
                         Provider.VIDEO_URL_RE
                     ) || []
                 ),
+                // `//host/…` literals: keep their authority instead of letting
+                // the loop re-root them on the embed host.
+                ...(
+                    unescapedSearchSource.match(
+                        Provider.PROTOCOL_RELATIVE_VIDEO_URL_RE
+                    ) || []
+                ).map(
+                    url => `https:${url}`
+                ),
                 // JWPlayer setup({sources: [{file: "URL"}]}) pattern
                 ...(
                     (unescapedSearchSource.match(
@@ -1060,6 +1493,12 @@ class Provider {
             VideoSource[] = [];
 
         let origin = "";
+
+        // The page often carries the same stream twice — once escaped
+        // (`https:\/\/…`) and once as a bare `//host/…` literal. Both normalize
+        // to the same final URL, so dedupe after normalization, not before.
+        const seenUrls =
+            new Set<string>();
 
         try {
             const urlObj =
@@ -1112,6 +1551,30 @@ class Provider {
                 );
                 continue;
             }
+
+            if (
+                Provider.DECOY_VIDEO_RE.test(
+                    finalUrl
+                )
+            ) {
+                console.log(
+                    `[${this._Server.toUpperCase()}] Ignoring sample clip:`,
+                    finalUrl
+                );
+                continue;
+            }
+
+            if (
+                seenUrls.has(
+                    finalUrl
+                )
+            ) {
+                continue;
+            }
+
+            seenUrls.add(
+                finalUrl
+            );
 
             const type =
                 finalUrl.includes(
@@ -1316,7 +1779,7 @@ class Provider {
             );
 
             const response =
-                await fetch(
+                await this.proxyFetch(
                     searchUrl.toString()
                 );
 

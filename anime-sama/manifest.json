@@ -1,11 +1,11 @@
 {
     "id": "anime-sama-v2-online-streaming",
     "name": "FR | Anime Sama V2",
-    "version": "2.2.6",
+    "version": "2.2.7",
     "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama/manifest.json",
     "language": "typescript",
     "type": "onlinestream-provider",
-    "description": "Anime Sama V2 — privilégie Sibnet, filtre HLS VK cassé",
+    "description": "Anime Sama V2 — Referer anti-hotlink (episodes.js repondait 403, liste d'episodes vide), packer base 62, Embed4me via API+AES bornee, faux flux et doublons filtres",
     "author": "LdCm",
     "lang": "fr",
     "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/anime-sama/payload.ts"
