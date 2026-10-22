@@ -70,6 +70,26 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/franime/manifest
 - `manifest.json` — Métadonnées extension
 - `payload.ts` — Provider TypeScript
 
+### 📖 Anime-Sama | Manga (Manga Provider)
+
+Provider scans/webtoons Anime-Sama pour Seanime. Fork du provider « AnimeSama (Manga) »
+de pal & Rafou376 (v2.1.0), corrigé pour le catalogue de 2026-10 : la recherche passe
+désormais par `GET /catalogue/fragment.php?search=…` (JSON) au lieu du HTML de
+`/catalogue/?search=…`, qui ne contient plus aucune carte.
+
+**Installation :** Seanime → Extensions → Add extensions → coller l'URL :
+```
+https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama-manga/manifest.json
+```
+
+⚠️ Désinstaller d'abord la version d'origine (`animesamamanga` de Pal-droid) : même `id`,
+les deux ne peuvent pas coexister.
+
+**Fichiers :**
+- `manifest.json` — Métadonnées extension
+- `provider.js` — Provider JavaScript (recherche fragment.php + cartes `as-carte`)
+- `test_parser.js` — Fixtures du parseur (`node test_parser.js`)
+
 ### 📺 Chrome Cast (Plugin)
 
 Plugin expérimental pour activer la lecture distante / Cast natif dans Seanime Web.
