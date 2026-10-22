@@ -1,11 +1,11 @@
 {
     "id": "voir-anime-v2-online-streaming",
     "name": "VoirAnime V2",
-    "version": "2.1.0",
+    "version": "2.2.0",
     "manifestURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/voir-anime-v2/manifest.json",
     "language": "typescript",
     "type": "onlinestream-provider",
-    "description": "VoirAnime V2 — lecteurs myTV + Streamtape (reconstruction d'URL corrigée), suivi des redirections JS, faux flux filtrés ; voe/moon/fhd1/sb désactivés",
+    "description": "VoirAnime V2 — recherche AJAX légère (fini les pages de 175 Ko), cache des pages, lecteurs myTV + Streamtape (reconstruction d'URL corrigée), redirections JS suivies, faux flux filtrés",
     "author": "LdCm",
     "lang": "fr",
     "payloadURI": "https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/voir-anime-v2/payload.ts"

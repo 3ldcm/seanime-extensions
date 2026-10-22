@@ -80,6 +80,12 @@ function check(name, actual, expected) {
 }
 
 let calls = []
+function resetCalls(p) {
+  calls = []
+  p.pageCache = {}
+  p.searchCache = {}
+}
+
 function stubFetch(pages) {
   return async function (url, init) {
     const key = String(url)
@@ -104,7 +110,7 @@ async function main() {
   check('no redirect → empty', provider.extractJsRedirectTarget('<html><body>player</body></html>'), '')
 
   console.log('findEpisodeServer() — JS redirect to the mirror is followed')
-  calls = []
+  resetCalls(provider)
   globalThis.fetch = stubFetch({
     [EPISODE_URL]: EPISODE_HTML,
     [IFRAME_URL]: VOEREDIRECT_HTML,
@@ -118,14 +124,14 @@ async function main() {
   check('server name kept', redirected.server, 'mytv')
 
   console.log('findEpisodeServer() — a redirect that is not an embed page is ignored')
-  calls = []
+  resetCalls(provider)
   globalThis.fetch = stubFetch({ [EPISODE_URL]: EPISODE_HTML, [IFRAME_URL]: AD_REDIRECT_HTML })
   const notFollowed = await provider.findEpisodeServer({ id: EPISODE_URL, url: EPISODE_URL, number: 11 }, 'mytv')
   check('no extra request for the ad host', calls.map((c) => c.url), [EPISODE_URL, IFRAME_URL])
   check('no source claimed', notFollowed.videoSources, [])
 
   console.log('findEpisodeServer() — a normal player page keeps working')
-  calls = []
+  resetCalls(provider)
   const PLAYER_HTML = '<html><body><script>file: "' + STREAM_URL + '"</script></body></html>'
   globalThis.fetch = stubFetch({ [EPISODE_URL]: EPISODE_HTML, [IFRAME_URL]: PLAYER_HTML })
   const direct = await provider.findEpisodeServer({ id: EPISODE_URL, url: EPISODE_URL, number: 11 }, 'mytv')
@@ -134,7 +140,7 @@ async function main() {
   check('referer stays the iframe origin', direct.headers.referer, 'https://voembed.net/')
 
   console.log('findEpisodeServer() — decoy video URLs are rejected')
-  calls = []
+  resetCalls(provider)
   const DECOY_HTML =
     '<html><body><script>var source="https://test-videos.co.uk/vids/bigbuckbunny/mp4/av1/1080/Big_Buck_Bunny_1080_10s_5MB.mp4";</script>' +
     '<script>file: "' + STREAM_URL + '"</script></body></html>'
@@ -158,7 +164,7 @@ async function main() {
   check('deleted video page (404, no assignment) yields nothing', provider.collectStreamtapeExpressions('<html><body>Video not found or deleted</body></html>'), [])
 
   console.log('findEpisodeServer() — streamtape end to end')
-  calls = []
+  resetCalls(provider)
   const RESOLVED = 'https://861134098.tapecontent.net/radosgw/RydrkVoRpmIkOO/abc?file=video.mp4'
   globalThis.fetch = async function (url, init) {
     const key = String(url)
@@ -172,6 +178,33 @@ async function main() {
   check('probed URL = reconstructed get_video URL with stream=1', [calls[2].url.startsWith('https://streamtape.com/get_video?id=RydrkVoRpmIkOO'), calls[2].url.indexOf('&stream=1') !== -1], [true, true])
   check('the resolved CDN URL is returned', stape.videoSources.map((s) => s.url), [RESOLVED])
   check('stape source is typed mp4', stape.videoSources.map((s) => s.type), ['mp4'])
+
+  console.log('search() — AJAX endpoint contract')
+  resetCalls(provider)
+  const AJAX_JSON = JSON.stringify({ success: true, data: [
+    { title: 'Sousou no Frieren 2', url: 'https://voir-anime.to/anime/sousou-no-frieren-2/', type: 'video' },
+    { title: 'Sousou no Frieren 2 (VF)', url: 'https://voir-anime.to/anime/sousou-no-frieren-2-vf/', type: 'video' },
+  ] })
+  globalThis.fetch = stubFetch({ 'https://voir-anime.to/wp-admin/admin-ajax.php': AJAX_JSON })
+  const found = await provider.search({ query: 'Sousou no Frieren 2' })
+  check('POSTs the theme action to admin-ajax', [calls[0].url, calls[0].init.method, calls[0].init.body], [
+    'https://voir-anime.to/wp-admin/admin-ajax.php',
+    'POST',
+    'action=wp-manga-search-manga&title=Sousou%20no%20Frieren%202',
+  ])
+  check('one request only (no word-by-word page walk)', calls.length, 1)
+  check('VOSTFR entry kept, VF filtered out', found.map((r) => [r.url, r.subOrDub]), [['https://voir-anime.to/anime/sousou-no-frieren-2/', 'sub']])
+  const again = await provider.search({ query: 'Sousou no Frieren 2' })
+  check('an identical search is served from cache', [calls.length, again.length], [1, 1])
+
+  console.log('findEpisodeServer() — the episode page is cached')
+  resetCalls(provider)
+  globalThis.fetch = stubFetch({ [EPISODE_URL]: EPISODE_HTML, [IFRAME_URL]: PLAYER_HTML })
+  await provider.findEpisodeServer({ id: EPISODE_URL, url: EPISODE_URL, number: 11 }, 'mytv')
+  const beforeCache = calls.length
+  await provider.findEpisodeServer({ id: EPISODE_URL, url: EPISODE_URL, number: 11 }, 'mytv')
+  check('first call fetches page + iframe, second one only the iframe', [beforeCache, calls.length - beforeCache], [2, 1])
+  check('the repeated call went straight to the iframe', calls[2].url, IFRAME_URL)
 
   globalThis.fetch = realFetch
   console.log(failures === 0 ? '\\nall checks passed' : '\\n' + failures + ' check(s) failed')

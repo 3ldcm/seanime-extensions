@@ -18,6 +18,15 @@ class Provider {
         "stape"
     ];
 
+    // Seanime asks the same question several times in a row (entry opened, then
+    // the player refreshed, then the next episode of the same series): these two
+    // caches keep the repeats off the network.
+    private readonly SEARCH_TTL_MS = 300000;
+    private readonly PAGE_TTL_MS = 30000;
+
+    private searchCache: Record<string, { at: number, results: SearchResult[] }> = {};
+    private pageCache: Record<string, { at: number, html: string }> = {};
+
     // The site advertises six players; only these two can return a source today.
     // The others are kept out of SUPPORTED_SERVERS on purpose — Seanime shows
     // every advertised server in its picker, and a server that can never return
@@ -63,18 +72,87 @@ class Provider {
 
     private proxyFetch(
         targetUrl: string,
-        headers?: Record<string, string>
+        headers?: Record<string, string>,
+        method?: string,
+        body?: string
     ): Promise<Response> {
-        if (!headers) {
+        if (!headers && !method && !body) {
             return fetch(targetUrl);
         }
 
+        const init: any = {};
+
+        if (headers) init.headers = headers;
+        if (method) init.method = method;
+        if (body !== undefined) init.body = body;
+
         return fetch(
             targetUrl,
-            {
-                headers
-            }
+            init
         );
+    }
+
+    /**
+     * Episode and series pages are refetched on every call, and Seanime calls
+     * the provider several times in a row (entry opened, player refreshed, next
+     * episode of the same series). A short-lived cache keeps those repeats off
+     * the network — the same episode page used to be downloaded once per server
+     * and once per refresh.
+     */
+    private async fetchPageCached(
+        targetUrl: string
+    ): Promise<{ ok: boolean, status: number, html: string }> {
+
+        const cached =
+            this.pageCache[targetUrl];
+
+        if (
+            cached &&
+            Date.now() - cached.at < this.PAGE_TTL_MS
+        ) {
+            console.log(
+                "[VOIRANIME] Page cache hit:",
+                targetUrl
+            );
+
+            return {
+                ok: true,
+                status: 200,
+                html:
+                    cached.html
+            };
+        }
+
+        const response =
+            await this.proxyFetch(
+                targetUrl
+            );
+
+        if (
+            !response.ok
+        ) {
+            return {
+                ok: false,
+                status:
+                    response.status,
+                html: ""
+            };
+        }
+
+        const html =
+            await response.text();
+
+        this.pageCache[targetUrl] = {
+            at:
+                Date.now(),
+            html
+        };
+
+        return {
+            ok: true,
+            status: 200,
+            html
+        };
     }
 
     private normalizeTitle(
@@ -1592,17 +1670,258 @@ class Provider {
 
         return ["mytv"];
     }
-
+/**
+     * Search is served by the theme's own AJAX endpoint:
+     *   POST /wp-admin/admin-ajax.php   action=wp-manga-search-manga & title=<q>
+     *   → {"success":true,"data":[{"title":"Sousou no Frieren 2","url":"https://voir-anime.to/anime/sousou-no-frieren-2/","type":"video"}]}
+     * That answer weighs ~500 bytes. The previous implementation parsed the whole
+     * search page (~175 KB) and, when it found nothing, dropped the last word of
+     * the query and downloaded the whole page again: "Sousou no Frieren: Beyond
+     * Journey's End" cost 7 requests / 1.1 MB and ~20 s, and Seanime asks for
+     * several title variants per entry. The HTML page is now only a fallback and a
+     * single shortened retry replaces the word-by-word walk.
+     */
     async search(
         opts: SearchOptions
     ): Promise<SearchResult[]> {
 
-        let tempQuery =
-            opts.query;
+        const query =
+            (opts.query || "").trim();
 
-        while (
-            tempQuery !== ""
+        if (
+            !query
         ) {
+            return [];
+        }
+
+        const cacheKey =
+            query.toLowerCase() +
+            (
+                opts.dub
+                    ? "|vf"
+                    : "|vostfr"
+            );
+
+        const cached =
+            this.searchCache[cacheKey];
+
+        if (
+            cached &&
+            Date.now() - cached.at < this.SEARCH_TTL_MS
+        ) {
+            console.log(
+                "[VOIRANIME] Search cache hit:",
+                query
+            );
+
+            return cached.results;
+        }
+
+        const candidates =
+            await this.searchCandidates(
+                query
+            );
+
+        const results =
+            this.rankCandidates(
+                query,
+                candidates,
+                !!opts.dub
+            );
+
+        this.searchCache[cacheKey] = {
+            at:
+                Date.now(),
+            results
+        };
+
+        return results;
+    }
+
+    /**
+     * Candidate titles/URLs: AJAX first, then the HTML page once, then a single
+     * retry on the part of the title preceding a subtitle separator.
+     */
+    private async searchCandidates(
+        query: string
+    ): Promise<{ title: string, url: string }[]> {
+
+        const variants =
+            this.searchVariants(
+                query
+            );
+
+        // The AJAX endpoint answers in ~500 bytes, so every cheap variant is
+        // tried before touching the search page (175 KB).
+        for (const variant of variants) {
+            const found =
+                await this.searchViaAjax(
+                    variant
+                );
+
+            if (
+                found.length
+            ) {
+                return found;
+            }
+        }
+
+        // Last resort: the endpoint matched none of the variants (it matches
+        // leading words only, so "Solo Leveling 2" fails where "Solo Leveling"
+        // returns both seasons), or it is down.
+        for (const variant of variants) {
+            const found =
+                await this.searchViaPage(
+                    variant
+                );
+
+            if (
+                found.length
+            ) {
+                return found;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Cheap query variants, most specific first: the title as asked, the part
+     * before a subtitle separator ("Mushoku Tensei: Jobless Reincarnation"), and
+     * the title without a trailing season marker ("Solo Leveling 2").
+     */
+    private searchVariants(
+        query: string
+    ): string[] {
+        const variants: string[] = [];
+
+        const add =
+            function (value: string) {
+                const trimmed =
+                    value.trim();
+
+                if (
+                    trimmed &&
+                    variants.indexOf(trimmed) === -1
+                ) {
+                    variants.push(
+                        trimmed
+                    );
+                }
+            };
+
+        add(query);
+
+        add(
+            query.split(/[:–—-]/)[0]
+        );
+
+        add(
+            query.replace(
+                /\s+(?:saison|season|part|partie)?\s*(?:\d{1,2}|ii|iii|iv)$/i,
+                ""
+            )
+        );
+
+        return variants;
+    }
+
+    private async searchViaAjax(
+        query: string
+    ): Promise<{ title: string, url: string }[]> {
+        try {
+            const response =
+                await this.proxyFetch(
+                    this.BASE_URL + "/wp-admin/admin-ajax.php",
+                    {
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        Referer:
+                            this.BASE_URL + "/",
+                        "X-Requested-With":
+                            "XMLHttpRequest"
+                    },
+                    "POST",
+                    "action=wp-manga-search-manga&title=" + encodeURIComponent(query)
+                );
+
+            if (
+                !response.ok
+            ) {
+                console.log(
+                    "[VOIRANIME] AJAX search HTTP:",
+                    response.status
+                );
+
+                return [];
+            }
+
+            let payload: any = null;
+
+            try {
+                payload =
+                    JSON.parse(
+                        await response.text()
+                    );
+
+            } catch (error) {
+                console.log(
+                    "[VOIRANIME] AJAX search: invalid JSON"
+                );
+
+                return [];
+            }
+
+            const items =
+                payload && payload.data
+                    ? payload.data
+                    : [];
+
+            const found: { title: string, url: string }[] = [];
+
+            for (const item of items) {
+                if (
+                    found.length >= 20
+                ) {
+                    break;
+                }
+
+                if (
+                    item &&
+                    typeof item.url === "string" &&
+                    typeof item.title === "string"
+                ) {
+                    found.push({
+                        title:
+                            item.title,
+                        url:
+                            item.url
+                    });
+                }
+            }
+
+            console.log(
+                "[VOIRANIME] AJAX search:",
+                query,
+                found.length
+            );
+
+            return found;
+
+        } catch (error) {
+            console.log(
+                "[VOIRANIME] AJAX search failed:",
+                String(error).slice(0, 120)
+            );
+
+            return [];
+        }
+    }
+
+    /** Fallback path: the search page itself (heavy — one request). */
+    private async searchViaPage(
+        query: string
+    ): Promise<{ title: string, url: string }[]> {
+        try {
             const searchUrl =
                 new URL(
                     this.BASE_URL + "/"
@@ -1610,17 +1929,12 @@ class Provider {
 
             searchUrl.searchParams.set(
                 "s",
-                tempQuery
+                query
             );
 
             searchUrl.searchParams.set(
                 "post_type",
                 "wp-manga"
-            );
-
-            console.log(
-                "[VOIRANIME] Search:",
-                searchUrl.toString()
             );
 
             const response =
@@ -1631,63 +1945,40 @@ class Provider {
             if (
                 !response.ok
             ) {
-                tempQuery =
-                    tempQuery
-                        .split(
-                            Provider.QUERY_SPLIT_RE
-                        )
-                        .slice(
-                            0,
-                            -1
-                        )
-                        .join(" ");
-
-                continue;
+                return [];
             }
 
-            const html =
-                await response.text();
-
             const $ =
-                await LoadDoc(html);
+                await LoadDoc(
+                    await response.text()
+                );
 
-            const resultRows =
+            const rows =
                 $(".c-tabs-item__content");
 
             const results =
-                resultRows.length() > 0
-                    ? resultRows
+                rows.length() > 0
+                    ? rows
                     : $(".c-tabs-item");
 
-            const seen:
-                Record<string, boolean> = {};
-
-            const items: {
-                title: string;
-                url: string;
-                score: number;
-                isDub: boolean;
-            }[] = [];
-
-            const fallbackItems: {
-                title: string;
-                url: string;
-                score: number;
-                isDub: boolean;
-            }[] = [];
+            const found: { title: string, url: string }[] = [];
 
             for (
                 let i = 0;
                 i < results.length();
                 i++
             ) {
-                const result =
-                    results.eq(i);
+                if (
+                    found.length >= 20
+                ) {
+                    break;
+                }
 
                 const item =
-                    result.find(
-                        ".post-title a, .tab-summary .post-title a"
-                    ).first();
+                    results
+                        .eq(i)
+                        .find(".post-title a, .tab-summary .post-title a")
+                        .first();
 
                 const href =
                     item.attr("href") || "";
@@ -1697,163 +1988,141 @@ class Provider {
                         .trim();
 
                 if (
-                    !href ||
-                    !title ||
-                    seen[href]
+                    href &&
+                    title
                 ) {
-                    continue;
-                }
-
-                seen[href] =
-                    true;
-
-                const chapterHints:
-                    string[] = [];
-
-                const chapterLinks =
-                    result.find(
-                        ".chapter a, .latest-chap a, .list-chapter a"
-                    );
-
-                for (
-                    let j = 0;
-                    j < chapterLinks.length();
-                    j++
-                ) {
-                    const chapter =
-                        chapterLinks.eq(j);
-
-                    chapterHints.push(
-                        chapter.text(),
-                        chapter.attr("href") || ""
-                    );
-                }
-
-                const detectedDub =
-                    this.detectResultDub(
+                    found.push({
                         title,
-                        href,
-                        chapterHints
-                    );
+                        url:
+                            href
+                    });
+                }
+            }
 
-                const isDub =
-                    detectedDub === null
-                        ? false
-                        : detectedDub;
+            console.log(
+                "[VOIRANIME] Page search:",
+                query,
+                found.length
+            );
 
-                console.log(
-                    "[VOIRANIME] Candidate:",
+            return found;
+
+        } catch (error) {
+            console.log(
+                "[VOIRANIME] Page search failed:",
+                String(error).slice(0, 120)
+            );
+
+            return [];
+        }
+    }
+
+    /** Dub/sub filtering + relevance scoring, shared by both search paths. */
+    private rankCandidates(
+        query: string,
+        candidates: { title: string, url: string }[],
+        wantsDub: boolean
+    ): SearchResult[] {
+
+        const seen: Record<string, boolean> = {};
+
+        const items: { title: string, url: string, score: number, isDub: boolean }[] = [];
+
+        const fallbackItems: { title: string, url: string, score: number, isDub: boolean }[] = [];
+
+        for (const candidate of candidates) {
+            const title =
+                candidate.title.trim();
+
+            const href =
+                candidate.url;
+
+            if (
+                !href ||
+                !title ||
+                seen[href]
+            ) {
+                continue;
+            }
+
+            seen[href] = true;
+
+            const detected =
+                this.detectResultDub(
                     title,
                     href,
-                    "lang=" + (
-                        isDub
-                            ? "vf"
-                            : "vostfr"
+                    []
+                );
+
+            const isDub =
+                detected === null
+                    ? false
+                    : detected;
+
+            const entry = {
+                title,
+                url:
+                    href,
+                score:
+                    this.scoreSearchResult(
+                        query,
+                        title,
+                        href
                     ),
-                    "requested=" + (
-                        opts.dub
-                            ? "vf"
-                            : "vostfr"
-                    )
-                );
+                isDub
+            };
 
-                if (
-                    opts.dub !== isDub
-                ) {
-                    if (
-                        opts.dub &&
-                        !isDub
-                    ) {
-                        fallbackItems.push({
-                            title,
-                            url:
-                                href,
-                            score:
-                                this.scoreSearchResult(
-                                    tempQuery,
-                                    title,
-                                    href
-                                ),
-                            isDub
-                        });
-                    }
-
-                    continue;
-                }
-
-                items.push({
-                    title,
-                    url:
-                        href,
-                    score:
-                        this.scoreSearchResult(
-                            tempQuery,
-                            title,
-                            href
-                        ),
+            console.log(
+                "[VOIRANIME] Candidate:",
+                title,
+                href,
+                "lang=" + (
                     isDub
-                });
-            }
+                        ? "vf"
+                        : "vostfr"
+                ),
+                "requested=" + (
+                    wantsDub
+                        ? "vf"
+                        : "vostfr"
+                )
+            );
 
             if (
-                items.length === 0 &&
-                fallbackItems.length > 0
+                wantsDub !== isDub
             ) {
-                console.log(
-                    "[VOIRANIME] No VF result found, falling back to VOSTFR"
-                );
-
-                return fallbackItems
-                    .sort(
-                        (a, b) =>
-                            b.score -
-                            a.score
-                    )
-                    .slice(
-                        0,
-                        10
-                    )
-                    .map(
-                        item => ({
-                            id:
-                                item.url,
-                            title:
-                                item.title,
-                            url:
-                                item.url,
-                            subOrDub:
-                                "dub"
-                        })
+                if (
+                    wantsDub &&
+                    !isDub
+                ) {
+                    fallbackItems.push(
+                        entry
                     );
-            }
-
-            if (
-                items.length === 0
-            ) {
-                tempQuery =
-                    tempQuery
-                        .split(
-                            Provider.QUERY_SPLIT_RE
-                        )
-                        .slice(
-                            0,
-                            -1
-                        )
-                        .join(" ");
+                }
 
                 continue;
             }
 
-            return items
-                .sort(
-                    (a, b) =>
-                        b.score -
-                        a.score
-                )
-                .slice(
-                    0,
-                    10
-                )
+            items.push(
+                entry
+            );
+        }
+
+        const byScore =
+            (a: { score: number }, b: { score: number }) =>
+                b.score - a.score;
+
+        if (
+            items.length === 0 &&
+            fallbackItems.length > 0
+        ) {
+            console.log(
+                "[VOIRANIME] No VF result found, falling back to VOSTFR"
+            );
+
+            return fallbackItems
+                .sort(byScore)
+                .slice(0, 10)
                 .map(
                     item => ({
                         id:
@@ -1863,36 +2132,49 @@ class Provider {
                         url:
                             item.url,
                         subOrDub:
-                            item.isDub
-                                ? "dub"
-                                : "sub"
+                            "dub" as any
                     })
                 );
         }
 
-        return [];
+        return items
+            .sort(byScore)
+            .slice(0, 10)
+            .map(
+                item => ({
+                    id:
+                        item.url,
+                    title:
+                        item.title,
+                    url:
+                        item.url,
+                    subOrDub:
+                        (
+                            item.isDub
+                                ? "dub"
+                                : "sub"
+                        ) as any
+                })
+            );
     }
 
     async findEpisodes(
         id: string
     ): Promise<EpisodeDetails[]> {
 
-        const response =
-            await this.proxyFetch(
+        const page =
+            await this.fetchPageCached(
                 id
             );
 
         if (
-            !response.ok
+            !page.ok
         ) {
             return [];
         }
 
-        const html =
-            await response.text();
-
         const $ =
-            await LoadDoc(html);
+            await LoadDoc(page.html);
 
         const links =
             $(".listing-chapters_wrap li.wp-manga-chapter a");
@@ -1956,13 +2238,13 @@ class Provider {
             (_server || "")
                 .toLowerCase();
 
-        const response =
-            await this.proxyFetch(
+        const page =
+            await this.fetchPageCached(
                 episode.id
             );
 
         if (
-            !response.ok
+            !page.ok
         ) {
             return <EpisodeServer>{
                 headers: {},
@@ -1972,7 +2254,7 @@ class Provider {
         }
 
         const html =
-            await response.text();
+            page.html;
 
         const sources =
             this.parseChapterSources(

@@ -55,6 +55,11 @@ miroir, source construite depuis un blob obfusqué par un loader dépendant du D
 (mfw09.org, handshake empreinte/AES-GCM), `fhd1` (my.mail.ru, 404 partout), `sb`
 (streamhide.to, injoignable depuis l'hôte de test).
 
+**Recherche AJAX :** `POST /wp-admin/admin-ajax.php` (`action=wp-manga-search-manga&title=…`)
+répond en ~500 octets (titre + URL) contre 175 Ko pour la page de résultats. Les requêtes
+longues sont retentées en variantes légères (avant « : », sans numéro de saison) ; la page
+n'est qu'un dernier recours, et les réponses sont mises en cache 5 min (pages 30 s).
+
 **Installation :** Seanime → Extensions → Add extensions → coller l'URL :
 ```
 https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/voir-anime-v2/manifest.json
@@ -120,6 +125,12 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/chrome-cast/mani
   l'installation si un manifeste échoue à son « sanity check » (`author` ≤ 25 **octets**,
   `name` ≤ 50, `id` 3–40 alphanumérique, version semver stricte) et affiche
   « failed sanity check, extension author is too long ».
+- **Chercher l'endpoint AJAX du thème avant de parser des pages.** Sur les sites WordPress
+  (wp-manga/Madara), la page de résultats pèse 150–200 Ko alors que
+  `POST /wp-admin/admin-ajax.php` (`action=wp-manga-search-manga&title=…`) répond en ~500
+  octets avec titre + URL. Même logique qu'`anime-sama` avec `fragment.php`. Ne garder le
+  parsing de page qu'en repli, et jamais mot par mot : une variante raccourcie (avant « : »,
+  sans numéro de saison) coûte moins cher qu'un téléchargement complet.
 - **Streamtape :** l'URL est construite par JS dans la page et la découpe change à chaque
   chargement (préfixe aléatoire dans le littéral, un ou deux `.substring()` chaînés).
   N'appliquer que le premier `.substring()` produit `dget_video` (404) ou un hôte bidon
