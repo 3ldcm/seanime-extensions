@@ -108,6 +108,13 @@ https://raw.githubusercontent.com/3ldcm/seanime-extensions/main/anime-sama-manga
 ⚠️ Désinstaller d'abord la version d'origine (`animesamamanga` de Pal-droid) : même `id`,
 les deux ne peuvent pas coexister.
 
+**Corrections v2.2.3 — chapitres téléchargés enfin lisibles :** l'identifiant de chapitre
+contenait le titre **déjà URL-encodé** (`Kaoru%20Hana%20…`). Seanime tire de cet identifiant à la
+fois un nom de dossier et un chemin d'URL ; l'échappement prévu pour les espaces (`$SPACE$`) était
+donc contourné, et le serveur décodait `%20` en espace au moment de servir le fichier → **404 sur
+chaque page**, lecteur blanc, alors que la lecture en ligne fonctionnait. L'identifiant porte
+maintenant le titre brut et l'encodage se fait au moment de construire l'URL de l'image.
+
 **Fichiers :**
 - `manifest.json` — Métadonnées extension
 - `provider.js` — Provider JavaScript (recherche fragment.php + cartes `as-carte`)
