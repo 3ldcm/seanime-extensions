@@ -86,16 +86,26 @@ async function networkChecks() {
         global.fetch = realFetch
     }
 
-    console.log('findChapterPages — static page URLs from the encoded chapter id')
+    console.log('findChapterPages — static page URLs from the raw chapter id')
     check(
-        'builds 3 page URLs with referer',
-        await p.findChapterPages('infinite-mage|Infinite%20Mage|vf|1|3'),
+        'builds 3 page URLs, encoding the raw title only here',
+        await p.findChapterPages('infinite-mage|Infinite Mage|vf|1|3'),
         [
             { url: 'https://anime-sama.to/s2/scans/Infinite%20Mage/1/1.jpg', index: 0, headers: { Referer: 'https://anime-sama.to/' } },
             { url: 'https://anime-sama.to/s2/scans/Infinite%20Mage/1/2.jpg', index: 1, headers: { Referer: 'https://anime-sama.to/' } },
             { url: 'https://anime-sama.to/s2/scans/Infinite%20Mage/1/3.jpg', index: 2, headers: { Referer: 'https://anime-sama.to/' } },
         ]
     )
+    check(
+        'keeps a title holding a | in one piece and preserves its spacing',
+        (await p.findChapterPages('blue-lock|Blue Lock | Something |vf|1|1')).map((page) => page.url),
+        ['https://anime-sama.to/s2/scans/Blue%20Lock%20%7C%20Something%20/1/1.jpg']
+    )
+    // Seanime turns the chapter id into a download directory name AND a URL path,
+    // escaping what the filesystem needs and decoding %xx on the way in: a `%` in
+    // the id is decoded into a space, the directory is then never found and every
+    // downloaded page answers 404. Guard the id against pre-encoding.
+    check('the chapter id template carries no pre-encoded title', /id: `\$\{mangaId\}\|\$\{title\}\|/.test(src) && !/\|\$\{encodeURIComponent\(title\)\}/.test(src), true)
 
     console.log('getWorkTitle — raw title (spacing preserved)')
     check('keeps trailing spaces of the oeuvre title', p.getWorkTitle('<h1 id="titreOeuvre" class="oe-titre">Blue Lock  </h1>'), 'Blue Lock  ')

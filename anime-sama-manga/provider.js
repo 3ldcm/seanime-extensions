@@ -188,7 +188,15 @@ class Provider {
                 return Object.entries(apiImageCountJson).map(([chapName, numPages]) => ({
                     // Encode mangaId, oeuvre title, lang, chapter number and page count
                     // so findChapterPages can build static image URLs + a correct referer.
-                    id: `${mangaId}|${encodeURIComponent(title)}|${lang}|${chapName}|${numPages}`,
+                    //
+                    // The title is stored RAW (not encodeURIComponent'd) on purpose:
+                    // Seanime derives both a download directory name and a URL path
+                    // from the chapter id, escaping what the filesystem needs
+                    // (`|` -> `$PIPE$`, ` ` -> `$SPACE$`) and letting the HTTP layer
+                    // decode `%xx` on the way in. A pre-encoded `%20` slipped through
+                    // that escaping, was decoded to a space, and every downloaded page
+                    // answered 404 — the reader stayed blank. Keep the id free of `%`.
+                    id: `${mangaId}|${title}|${lang}|${chapName}|${numPages}`,
                     url: `${this.api}/catalogue/${mangaId}/${scanPath}/${chapName}`,
                     title: `Chapitre ${chapName}`,
                     chapter: chapName,
@@ -228,12 +236,17 @@ class Provider {
     }
 
     async findChapterPages(chapterId) {
-        // chapterId is "mangaId|encodedOeuvre|lang|chapNum|pageCount"
+        // chapterId is "mangaId|raw oeuvre title|lang|chapNum|pageCount".
+        //
+        // The title is raw here (see findChapters): encode it only when building
+        // the static image URL. The three fields after it are fixed (lang, chapter,
+        // page count), so `slice(1, -3)` keeps a title holding a `|` in one piece.
         const parts = String(chapterId).split('|')
-        const encodedOeuvre = parts[1]
-        const chapNum = parts[3]
-        const pageCount = parseInt(parts[4], 10) || 0
+        const title = parts.slice(1, -3).join('|')
+        const chapNum = parts[parts.length - 2]
+        const pageCount = parseInt(parts[parts.length - 1], 10) || 0
         const referer = `${this.api}/`
+        const encodedOeuvre = encodeURIComponent(title)
 
         // Pages are static images at:
         // https://anime-sama.to/s2/scans/{oeuvre}/{chapNum}/{pageNum}.jpg
