@@ -14,6 +14,17 @@ d'installation » et les points d'attention de chacune. Servie par GitHub Pages
 python3 tools/build-marketplace.py
 ```
 
+Le catalogue inclut les extensions de ce dépôt **et** des extensions communautaires
+françaises référencées depuis leur dépôt d'origine (bandeau « communautaire »).
+La liste des manifestes communautaires est dans `tools/third-party.json` : le
+générateur les télécharge et lit leur **version réelle**, il n'invente aucune
+version. Un id déjà porté par un fork de ce dépôt est ignoré pour éviter
+d'écraser le fork à l'installation.
+
+URL technique à coller dans Seanime → Extensions → **Marketplace URL** (tableau JSON) :
+`https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/marketplace.json`
+(copie servie par Pages : `https://3ldcm.github.io/seanime-extensions/marketplace.json`)
+
 ## Extensions
 
 ### 🎬 Anime-Sama (Streaming Provider)

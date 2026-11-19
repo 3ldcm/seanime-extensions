@@ -1,0 +1,23 @@
+{
+  "_comment": "Extensions communautaires FR référencées dans la marketplace. Le générateur télécharge chaque manifeste pour en lire la VRAIE version ; aucune version n'est écrite à la main ici. Seules les sources de langue 'fr' ou 'multi' sont listées.",
+  "manifests": [
+    "https://raw.githubusercontent.com/TropicalFrog3/seanime-extension/refs/heads/main/online-streaming/anime-sama/manifest.json",
+    "https://raw.githubusercontent.com/TropicalFrog3/seanime-extension/refs/heads/main/online-streaming/anime-sama-vip/manifest.json",
+    "https://raw.githubusercontent.com/TropicalFrog3/seanime-extension/refs/heads/main/online-streaming/anime-ultra/manifest.json",
+    "https://raw.githubusercontent.com/TropicalFrog3/seanime-extension/refs/heads/main/online-streaming/french-anime/manifest.json",
+    "https://raw.githubusercontent.com/TropicalFrog3/seanime-extension/refs/heads/main/online-streaming/toonanime/manifest.json",
+    "https://raw.githubusercontent.com/TropicalFrog3/seanime-extension/refs/heads/main/online-streaming/vostfree/manifest.json",
+    "https://raw.githubusercontent.com/rafou376/seanime-pl/main/src/onlinestream/french-stream/manifest.json",
+    "https://raw.githubusercontent.com/rafou376/seanime-pl/main/src/onlinestream/anime-sama-anime/manifest.json",
+    "https://raw.githubusercontent.com/rafou376/seanime-pl/main/src/manga/mangas-origines/manifest.json",
+    "https://raw.githubusercontent.com/Pal-droid/Seanime-Providers/refs/heads/main/src/manga/lelmanga/manifest.json",
+    "https://raw.githubusercontent.com/Pal-droid/Seanime-Providers/main/src/manga/mangafire/manifest.json",
+    "https://raw.githubusercontent.com/dot-fx/seanime-extensions/master/src/MangaFire/manifest.json",
+    "https://raw.githubusercontent.com/dot-fx/seanime-extensions/master/src/MangaBaka/manifest.json"
+  ],
+  "_skip_ids": [
+    "animesamamanga",
+    "sushiscan"
+  ],
+  "_skip_reason": "Ces ids sont déjà portés par les forks de 3ldcm (anime-sama-manga, sushiscan) : lisir l'original écraserait le fork à l'installation."
+}

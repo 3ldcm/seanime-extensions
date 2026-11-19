@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOCS = os.path.join(ROOT, "docs")
@@ -92,6 +93,79 @@ def payload_file(manifest: dict, ext_dir: str) -> str:
     return ""
 
 
+def repo_url(manifest_uri):
+    """Déduit l'URL GitHub du dépôt à partir d'une URL raw.githubusercontent.com."""
+    m = re.match(
+        r"https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(?:refs/heads/|refs/tags/)?([^/]+)/",
+        manifest_uri)
+    if not m:
+        return ""
+    owner, repo, ref = m.groups()
+    if ref in ("main", "master", "dev", "develop"):
+        return f"https://github.com/{owner}/{repo}/tree/{ref}"
+    return f"https://github.com/{owner}/{repo}"
+
+
+def collect_third_party():
+    """Extensions communautaires FR référencées dans la marketplace.
+
+    Les manifestes sont téléchargés en direct : la version affichée vient
+    toujours du manifeste distant, jamais d'une valeur écrite à la main.
+    """
+    cfg_path = os.path.join(ROOT, "tools", "third-party.json")
+    if not os.path.isfile(cfg_path):
+        return []
+    cfg = json.load(open(cfg_path, encoding="utf-8"))
+    skip_ids = set(cfg.get("_skip_ids", []))
+    out = []
+    for manifest_uri in cfg.get("manifests", []):
+        try:
+            req = urllib.request.Request(
+                manifest_uri, headers={"User-Agent": "seanime-marketplace-builder"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                manifest = json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:  # réseau coupé / manifeste déplacé
+            print(f"  ! communautaire inaccessible: {manifest_uri} ({exc})", file=sys.stderr)
+            continue
+        ext_id = manifest.get("id") or ""
+        if not ext_id or ext_id in skip_ids:
+            if ext_id in skip_ids:
+                print(f"  - {ext_id}: ignoré (id porté par un fork 3ldcm)", file=sys.stderr)
+            continue
+        mtype = manifest.get("type") or "onlinestream-provider"
+        notes = [f"Extension communautaire — auteur : {manifest.get('author') or '?'}."]
+        if manifest.get("website"):
+            notes.append(f"Site : {manifest['website']}")
+        payload_uri = manifest.get("payloadURI") or ""
+        if not payload_uri and not manifest.get("payload"):
+            notes.append("⚠️ Ni payload ni payloadURI dans le manifeste distant.")
+        out.append(
+            {
+                "dir": f"community/{ext_id}",
+                "name": manifest.get("name") or ext_id,
+                "version": manifest.get("version") or "0.0.0",
+                "id": ext_id,
+                "type": mtype,
+                "typeLabel": TYPE_LABEL.get(mtype, "Autre"),
+                "lang": manifest.get("lang") or "",
+                "author": manifest.get("author") or "",
+                "description": manifest.get("description") or "",
+                "language": manifest.get("language") or "typescript",
+                "icon": manifest.get("icon") or "",
+                "install": manifest_uri,
+                "payload": payload_uri,
+                "source": repo_url(manifest_uri) or manifest_uri.rsplit("/", 1)[0],
+                "repo": repo_url(manifest_uri),
+                "website": manifest.get("website") or "",
+                "readme": manifest.get("readme") or "",
+                "notes": notes,
+                "experimental": False,
+                "community": True,
+            }
+        )
+    return out
+
+
 def collect():
     items = []
     for ext in ORDER:
@@ -153,8 +227,8 @@ def marketplace_entries(items):
                 "type": it["type"],
                 "language": it["language"],
                 "lang": it["lang"] or "multi",
-                "website": "https://github.com/3ldcm/seanime-extensions",
-                "readme": "https://github.com/3ldcm/seanime-extensions",
+                "website": it.get("website") or "https://github.com/3ldcm/seanime-extensions",
+                "readme": it.get("readme") or it.get("repo") or "https://github.com/3ldcm/seanime-extensions",
                 "notes": "\n".join("- " + n for n in it["notes"]),
             }
         )
@@ -162,7 +236,7 @@ def marketplace_entries(items):
 
 
 def main():
-    items = collect()
+    items = collect() + collect_third_party()
     os.makedirs(DOCS, exist_ok=True)
 
     mp_path = os.path.join(ROOT, "marketplace.json")
@@ -178,8 +252,11 @@ def main():
     print(f"{len(entries)} extensions écrites dans {os.path.join(DOCS, 'marketplace.json')}")
 
     out = os.path.join(DOCS, "index.html")
-    with open(out, encoding="utf-8") as f:
+    tpl_path = os.path.join(ROOT, "tools", "index.template.html")
+    with open(tpl_path, encoding="utf-8") as f:
         template = f.read()
+    if "/*__DATA__*/[]" not in template:
+        raise SystemExit(f"placeholder DATA absent de {tpl_path}")
     html = template.replace("/*__DATA__*/[]", json.dumps(items, ensure_ascii=False))
     with open(out, "w", encoding="utf-8") as f:
         f.write(html)
