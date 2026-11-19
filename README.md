@@ -2,6 +2,18 @@
 
 Extensions pour [Seanime](https://github.com/Seanime/Seanime) — streaming providers et plugins.
 
+## 🛍 Marketplace
+
+**https://3ldcm.github.io/seanime-extensions/**
+
+Une page unique qui regroupe toutes les extensions avec un bouton « copier l'URL
+d'installation » et les points d'attention de chacune. Servie par GitHub Pages
+(dossier `docs/`), regénérée depuis les manifestes par :
+
+```bash
+python3 tools/build-marketplace.py
+```
+
 ## Extensions
 
 ### 🎬 Anime-Sama (Streaming Provider)
