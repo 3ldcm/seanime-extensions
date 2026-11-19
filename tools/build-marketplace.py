@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Génère la marketplace statique (docs/index.html) à partir des manifestes du dépôt.
+"""Génère la marketplace Seanime (marketplace.json) et le catalogue statique (docs/index.html).
 
 Usage :  python3 tools/build-marketplace.py
-Sortie : docs/index.html  (servi par GitHub Pages)
+Sorties :
+  marketplace.json  — format attendu par le champ « Marketplace URL » de Seanime
+                       (tableau JSON d'extensions, cf. internal/extension_repo/marketplace.go)
+  docs/index.html   — catalogue visuel (GitHub Pages), même données
 
 Règle : ne jamais inventer une version — la version affichée vient du manifeste,
 et le payload affiché est comparé au manifeste pour que le lien d'installation
@@ -99,6 +102,10 @@ def collect():
             continue
         manifest = json.load(open(mpath, encoding="utf-8"))
         pfile = payload_file(manifest, ext_dir)
+        icon_file = next(
+            (c for c in ("icon.png", "icon.jpg", "icon.jpeg", "icon.webp")
+             if os.path.isfile(os.path.join(ext_dir, c))), "")
+        icon = f"{RAW}/{ext}/{icon_file}" if icon_file else ""
         items.append(
             {
                 "dir": ext,
@@ -110,6 +117,8 @@ def collect():
                 "lang": manifest.get("lang") or "",
                 "author": manifest.get("author") or "",
                 "description": manifest.get("description") or "",
+                "language": manifest.get("language") or "typescript",
+                "icon": icon,
                 "install": f"{RAW}/{ext}/manifest.json",
                 "payload": f"{RAW}/{ext}/{pfile}" if pfile else "",
                 "source": f"https://github.com/3ldcm/seanime-extensions/tree/main/{ext}",
@@ -121,9 +130,53 @@ def collect():
     return items
 
 
+def marketplace_entries(items):
+    """Format attendu par le champ « Marketplace URL » de Seanime.
+
+    Le backend (internal/extension_repo/marketplace.go) fait :
+        json.Unmarshal(body, &[]extension.Extension)
+    puis ne garde que les entrées avec ID et ManifestURI non vides.
+    Le fichier DOIT donc être un tableau JSON — pas une page HTML.
+    """
+    out = []
+    for it in items:
+        out.append(
+            {
+                "id": it["id"],
+                "name": it["name"],
+                "version": it["version"],
+                "description": it["description"],
+                "author": it["author"],
+                "manifestURI": it["install"],
+                "payloadURI": it["payload"],
+                "icon": it["icon"],
+                "type": it["type"],
+                "language": it["language"],
+                "lang": it["lang"] or "multi",
+                "website": "https://github.com/3ldcm/seanime-extensions",
+                "readme": "https://github.com/3ldcm/seanime-extensions",
+                "notes": "\n".join("- " + n for n in it["notes"]),
+            }
+        )
+    return out
+
+
 def main():
     items = collect()
     os.makedirs(DOCS, exist_ok=True)
+
+    mp_path = os.path.join(ROOT, "marketplace.json")
+    entries = marketplace_entries(items)
+    payload = json.dumps(entries, ensure_ascii=False, indent=2) + "\n"
+    with open(mp_path, "w", encoding="utf-8") as f:
+        f.write(payload)
+    print(f"{len(entries)} extensions écrites dans {mp_path}")
+
+    # copie servie par GitHub Pages (docs/ est la racine du site)
+    with open(os.path.join(DOCS, "marketplace.json"), "w", encoding="utf-8") as f:
+        f.write(payload)
+    print(f"{len(entries)} extensions écrites dans {os.path.join(DOCS, 'marketplace.json')}")
+
     out = os.path.join(DOCS, "index.html")
     with open(out, encoding="utf-8") as f:
         template = f.read()

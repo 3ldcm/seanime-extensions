@@ -95,6 +95,11 @@ a.src:hover{color:var(--ink);border-color:var(--ink-3)}
 footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);color:var(--ink-3);font-size:13.5px;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 footer a{color:var(--ink-2)}
 .note-warn{margin-top:14px;font-size:13.5px;color:var(--warn);border-left:2px solid oklch(80% 0.13 75 / .6);padding-left:12px}
+.note-warn code{font-family:var(--mono);font-size:12.5px}
+.mpbox{margin-top:26px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:20px 22px}
+.mpbox h2{font-size:17px;margin:0 0 6px;letter-spacing:-.01em}
+.mpbox p{margin:0 0 14px;color:var(--ink-2);font-size:14px}
+.mpbox .row{margin-top:0}
 @media (prefers-reduced-motion: reduce){*{transition:none !important}}
 </style>
 </head>
@@ -130,6 +135,15 @@ footer a{color:var(--ink-2)}
 <main class="wrap">
   <div class="list" id="list"></div>
   <p class="empty" id="empty" hidden>Aucune extension ne correspond.</p>
+  <div class="mpbox">
+    <h2>Installer en une fois depuis Seanime</h2>
+    <p>Dans Seanime : <em>Extensions → Marketplace</em>, puis remplace l'<em>Marketplace URL</em> par l'adresse ci-dessous. Le catalogue complet s'affiche, chaque extension s'installe en un clic.</p>
+    <div class="row">
+      <div class="url" id="mp-url">https://raw.githubusercontent.com/3ldcm/seanime-extensions/refs/heads/main/marketplace.json</div>
+      <button class="copy" id="mp-copy">Copier l’URL</button>
+    </div>
+    <p class="payload" style="margin-top:12px">Alternative (même fichier, servi par GitHub Pages) : <a href="https://3ldcm.github.io/seanime-extensions/marketplace.json" target="_blank" rel="noreferrer">3ldcm.github.io/seanime-extensions/marketplace.json</a></p>
+  </div>
   <p class="note-warn" id="conflict" hidden>
     <strong>Anime-Sama (Manga)</strong> partage son <code>id</code> (<code>animesamamanga</code>) avec l'extension originale de pal-droid :
     désinstalle-la d'abord, sinon Seanime refusera d'installer la version fork.
@@ -232,6 +246,18 @@ document.getElementById('f-streaming').textContent = DATA.filter(i=>i.typeLabel=
 document.getElementById('f-manga').textContent = DATA.filter(i=>i.typeLabel==='Manga').length;
 document.getElementById('f-plugin').textContent = DATA.filter(i=>i.typeLabel==='Plugin').length;
 if(DATA.some(i=>i.dir==='anime-sama-manga')) document.getElementById('conflict').hidden = false;
+
+document.getElementById('mp-copy').addEventListener('click', async () => {
+  const btn = document.getElementById('mp-copy');
+  const val = document.getElementById('mp-url').textContent.trim();
+  try{ await navigator.clipboard.writeText(val); }
+  catch(e){
+    const ta = el('textarea'); ta.value = val; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+  }
+  btn.textContent = 'Copié ✓';
+  setTimeout(()=>{ btn.textContent = 'Copier l’URL'; }, 1800);
+});
 
 chips.addEventListener('click', e => {
   const b = e.target.closest('.chip'); if(!b) return;
